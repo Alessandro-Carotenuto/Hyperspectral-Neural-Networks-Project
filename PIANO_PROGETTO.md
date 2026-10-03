@@ -172,11 +172,26 @@ Verificare contenuto e struttura di Pavia University.
 
 Prima parte del notebook con dataset, figure e descrizione del problema.
 
-### Stato
+### Stato: completato
 
-Caricamento, shape e conteggio classi sono già completati.
+Completato nel notebook:
+
+- caricamento del cubo e della ground truth;
+- verifica di shape, dtype, intervallo e label;
+- conteggio dei pixel per classe;
+- visualizzazione delle bande 10, 50 e 90;
+- visualizzazione della ground truth;
+- grafico dello sbilanciamento delle classi etichettate;
+- firme spettrali medie delle nove classi;
+- configurazione della patch principale a `15 x 15`.
+
+Le figure ottenute sono già riutilizzabili nel notebook finale.
 
 ## Livello 1: pipeline patch e split del paper
+
+### Stato: prossimo
+
+Il livello non è ancora iniziato. Prima operazione: creare e salvare lo split delle coordinate secondo il protocollo few-shot del paper. L'estrazione delle patch avviene solo dopo aver verificato lo split.
 
 ### Obiettivo
 
