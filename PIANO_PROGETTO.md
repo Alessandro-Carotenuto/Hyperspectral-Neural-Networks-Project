@@ -1,590 +1,505 @@
-# Piano incrementale: classificazione HSI con CNN e Transformer
+# Roadmap incrementale: replica CTA-Net per classificazione HSI
 
-## TL;DR
-python -c "import torch, numpy, scipy, sklearn, matplotlib, seaborn, pandas, yaml; print('Setup completato'); print('PyTorch:', torch.__version__); print('CUDA:', torch.cuda.is_available())"
-Classificare immagini iperspettrali ad alta dimensionalità combinando:
+## Obiettivo
 
-- CNN per apprendere feature locali spaziali e spettrali;
-- Transformer per modellare contesto globale e relazioni a lungo raggio.
+Classificare i pixel di immagini iperspettrali combinando:
 
-Il progetto cresce per livelli. Ogni livello produce un risultato eseguibile, valutabile e presentabile. Se il tempo finisce, si consegna l'ultimo livello completato. Se resta tempo, si continua verso la versione CTA-Net prevista per gruppi di tre.
+- CNN per feature locali;
+- Transformer per feature non locali;
+- channel-spatial attention per raffinare le feature;
+- sample amplification per lavorare con pochi campioni etichettati.
+
+Paper di riferimento:
+
+> Chuan Fu et al., *CNN-Transformer and Channel-Spatial Attention based network for hyperspectral image classification with few samples*, Neural Networks 186, 2025, 107283. DOI: 10.1016/j.neunet.2025.107283.
+
+La priorità è ottenere presto un sistema completo. Ogni livello produce un risultato eseguibile, valutabile e presentabile. I livelli successivi avvicinano prima alla metodologia completa del paper, poi allo scope per tre studenti e infine all'Honors.
 
 ```text
-Pipeline dati
+Dataset e patch
     |
     v
-CNN baseline
+CNN-only baseline
     |
     v
-CNN + Transformer                 <- obiettivo minimo coerente col TL;DR
+CT block: CNN + Transformer          progetto base completo
     |
     v
 Channel-spatial attention
     |
     v
-Sample amplification + ablation  <- versione estesa per gruppi di tre
+Sample amplification                 replica CTA-Net su Pavia
     |
     v
-Adaptive band pruning            <- Honors, solo alla fine
+Ablation e replica estesa            estensione per tre studenti
+    |
+    v
+Adaptive spectral band pruning       Honors
 ```
 
-## Vincoli dell'esame
+## Che cosa significa CT
 
-- lavoro individuale ammesso;
-- difficoltà proporzionata alla dimensione del gruppo;
-- paper recente, preferibilmente successivo al 2022;
-- paper e obiettivo devono essere approvati dal docente;
-- consegna entro le 23:59 della data comunicata dal docente;
-- notebook Jupyter obbligatorio o formato equivalente;
-- presentazione di 5–7 slide;
-- esposizione di circa 5 minuti, seguita da domande;
-- vincoli computazionali e limiti devono essere dichiarati;
-- Honors richiede comunicazione preventiva e lavoro eccezionale.
+CT significa **CNN-Transformer**.
 
-La regola testuale parla di due giorni prima dell'esame, mentre l'esempio del 26 giugno indica il 23 giugno. Usare la data ufficiale pubblicata per il proprio appello oppure chiedere conferma al docente.
+Nel paper CNN e Transformer non sono disposti in sequenza. Lavorano in parallelo sulle stesse feature:
 
-## Interpretazione dello scope individuale
+```text
+feature iniziali
+      |
+  +---+---+
+  |       |
+ CNN  Transformer
+  |       |
+  +--concat--+
+       |
+    Conv 1x1
+       |
+   residual connection
+```
 
-Il nucleo individuale è il modello CNN + Transformer. Questo risponde direttamente all'obiettivo di combinare apprendimento locale e contesto globale.
+- ramo CNN: estrae informazioni locali e multiscala;
+- ramo Transformer: estrae relazioni non locali;
+- concatenazione: unisce i due tipi di informazione;
+- convoluzione `1x1`: riporta il numero di canali alla dimensione originale;
+- residual connection: somma risultato e input del CT block.
 
-La progressione consigliata è:
+## Task esatto
 
-- baseline CNN come riferimento necessario;
-- CNN + Transformer come progetto minimo completo;
-- channel-spatial attention come prima estensione;
-- sample amplification e ablation completa come avvicinamento allo scope per gruppi di tre;
-- adaptive pruning solo come possibile Honors.
+Il modello classifica un pixel usando il suo spettro e il contesto spaziale circostante.
 
-L'approvazione del docente resta necessaria. Non serve proporre subito tutta CTA-Net come requisito individuale.
+Per ogni pixel etichettato in posizione `(r, c)`:
 
-## Regola di lavoro
+```text
+input: patch iperspettrale 15 x 15 x 103
+target: classe del solo pixel centrale ground_truth[r, c]
+output: 9 logits, uno per classe
+```
 
-Completare, valutare e documentare un livello prima di iniziare il successivo.
+La patch non riceve una classe di maggioranza. I pixel vicini forniscono contesto, ma il target resta il pixel centrale.
 
-Un livello è completo solo quando:
+Al termine, il modello viene applicato ai pixel della scena per produrre una mappa di classificazione.
 
-1. il codice parte da un comando documentato;
-2. produce un checkpoint;
-3. calcola metriche sul test set;
-4. salva configurazione e seed;
-5. genera almeno una tabella o figura utilizzabile nel notebook finale.
-
-Non lasciare tre modelli incompleti. Meglio un livello inferiore completo e difendibile.
-
-Ogni livello deve aggiornare anche notebook e materiale del report. Codice completo senza analisi non soddisfa i criteri dell'esame.
-
-## Decisioni comuni a tutti i livelli
-
-### Ambiente di sviluppo e training
-
-Usare due ambienti con ruoli distinti:
-
-- VS Code locale per scrivere, organizzare e testare il codice su piccoli batch;
-- Kaggle Notebook per training completi e generazione dei risultati finali.
-
-Creare comunque `.venv` locale. Serve a controllare import, testare preprocessing e usare lo stesso codice fuori da Kaggle. Non serve replicare localmente potenza GPU.
-
-Su Kaggle:
-
-- abilitare acceleratore solo quando il modello è pronto;
-- mantenere dataset come input separato dal codice;
-- salvare checkpoint, configurazione, log, metriche e figure negli output;
-- registrare versioni di Python, PyTorch e librerie principali;
-- fissare seed;
-- verificare che notebook funzioni dall'inizio alla fine dopo un riavvio della sessione;
-- scaricare risultati importanti, perché una sessione non è archivio permanente del progetto.
-
-Tenere logica riutilizzabile in moduli Python. Usare notebook per orchestrazione, esperimenti, grafici e spiegazione. Evitare di duplicare tutto il modello in celle scollegate.
+## Protocollo principale del paper
 
 ### Dataset
 
-Usare solo Pavia University:
+Usare Pavia University:
 
-- 9 classi;
-- 103 bande utilizzabili;
-- dimensione gestibile;
-- classi meno fragili rispetto a Indian Pines;
-- un solo dataset riduce codice e tempo sperimentale.
+- dimensione: `610 x 340` pixel;
+- bande: `103` dopo rimozione delle 12 bande rumorose già assenti nel file distribuito;
+- classi: `9`;
+- pixel etichettati: `42.776`;
+- etichetta `0`: pixel non etichettato, escluso da loss e metriche.
 
-### Protocollo few-sample
+### Input
 
-### Decisione sul task
+- patch principale: `15 x 15`;
+- tutte le `103` bande;
+- nessuna PCA nella replica principale;
+- valore `13 x 13` conservato solo per eventuale confronto, perché sul dataset UP il paper trova buoni risultati con `13 x 13` e `15 x 15`.
 
-Il modello classifica pixel, ma riceve patch come input:
+### Split few-shot
 
-- unità da classificare: pixel centrale;
-- input: patch iperspettrale centrata sul pixel;
-- target: classe ground truth del solo pixel centrale;
-- output: 9 score, uno per classe;
-- una patch non riceve una classe di maggioranza e non viene trattata come immagine con una sola etichetta globale.
+Per ogni classe:
 
-Configurazione iniziale della patch del modello:
+- training: `10` pixel scelti casualmente;
+- validation: `5` pixel scelti casualmente tra quelli rimanenti;
+- test: tutti gli altri pixel etichettati.
 
-- dimensione spaziale: `11 x 11`;
-- profondità spettrale: 103 bande originali oppure 30 componenti dopo PCA;
-- target della patch centrata in `(r, c)`: `ground_truth[r, c]`.
+Salvare coordinate e seed di ogni split. La prima esecuzione usa un solo seed. La replica estesa usa dieci split casuali, come il paper.
 
-### Decisione sullo split spaziale
+Questo protocollo sostituisce lo split spaziale a blocchi nella replica principale. Il codice dei blocchi può essere conservato per un esperimento futuro, ma non appartiene al percorso principale.
 
-Dividere l'intera scena in blocchi spaziali uguali e non sovrapposti. Randomizzare i blocchi, non le singole patch, quindi assegnare ogni blocco interamente a training, validation oppure test.
+### Training riportato dal paper
 
-```text
-1 1 | 2 2
-1 1 | 2 2
-----+----
-3 3 | 4 4
-3 3 | 4 4
-```
+- optimizer: Adam;
+- learning rate: `0.00008`;
+- batch size: `32`;
+- epoche: `150`;
+- feature channels: `128`;
+- loss: cross-entropy multiclasse;
+- ambiente originale: PyTorch 1.10 e RTX 3090;
+- ambiente del progetto: PyTorch corrente su Kaggle, con differenza documentata.
 
-Esempio: blocchi 1, 2 e 4 al training; blocco 3 al test.
-
-Procedura:
-
-1. creare griglia di blocchi non sovrapposti;
-2. contare pixel di ogni classe presenti in ciascun blocco;
-3. assegnare blocchi con seed fisso;
-4. verificare che ogni classe compaia nel training e, se possibile, anche in validation e test;
-5. usare come candidati solo pixel etichettati appartenenti al rispettivo gruppo di blocchi;
-6. escludere centri troppo vicini ai confini tra gruppi diversi;
-7. salvare assegnazione dei blocchi e coordinate selezionate.
-
-Con patch `11 x 11`, raggio spaziale è 5 pixel. La fascia di sicurezza deve quindi impedire che una patch di training contenga pixel appartenenti a un blocco di validation o test.
-
-Configurazione few-sample iniziale, applicata dopo split dei blocchi:
-
-- training: 30 campioni per classe;
-- validation: 10 campioni per classe;
-- test: pixel etichettati idonei nei blocchi di test;
-- sviluppo: 1 seed;
-- risultati finali: 3 seed, se il tempo lo permette.
-
-Se split a blocchi non offre abbastanza campioni per una classe, ridurre quota in modo documentato oppure modificare assegnazione dei blocchi. Ogni modello deve usare esattamente stessi blocchi, coordinate e seed.
-
-### Preprocessing
-
-- normalizzazione per banda;
-- PCA a 30 componenti;
-- patch del modello `11 x 11`, centrate sui pixel da classificare;
-- flip e rotazioni di 90° solo nel training;
-- batch size 32 o 64;
-- early stopping sulla validation loss.
-
-PCA, dimensione patch e quote dello split sono configurabili. Non fare ricerca estesa: cambiare un valore solo per risolvere un problema osservato.
+Il paper non descrive chiaramente ogni dettaglio di normalizzazione e padding. Tali scelte devono essere esplicite nella nostra implementazione e riportate come differenze riproduttive.
 
 ### Metriche
 
-Calcolare fin dal primo modello:
-
-- overall accuracy (OA);
-- average accuracy per classe (AA);
-- macro-F1;
-- Cohen's kappa;
+- accuracy per classe;
+- Overall Accuracy, OA;
+- Average Accuracy, AA;
+- Cohen's Kappa;
 - confusion matrix;
-- numero di parametri;
-- tempo medio di inferenza.
+- mappa di classificazione.
 
-Questo evita di ricostruire la valutazione alla fine.
+Macro-F1, parametri e tempo di inferenza possono essere aggiunti, ma non sostituiscono le metriche del paper.
 
-## Livello preliminare: approvazione
+## Ambiente di lavoro
 
-**Tempo attivo:** circa 30 minuti.
+- VS Code locale: codice, notebook, test rapidi e ispezione dati;
+- `.venv` locale: dipendenze e controlli senza GPU;
+- Kaggle: training completi con GPU;
+- notebook finale: spiegazione, esperimenti, figure e risultati;
+- moduli Python: dataset, modelli, training e metriche riutilizzabili.
 
-Inviare al docente:
+Ogni run deve salvare:
 
-1. paper CTA-Net selezionato;
-2. obiettivo sintetico;
-3. scope individuale incrementale;
-4. dataset scelto;
-5. nota che training verrà eseguito su Kaggle.
+- configurazione;
+- seed;
+- coordinate dello split;
+- checkpoint migliore;
+- metriche;
+- curve di training;
+- mappa di classificazione.
 
-Messaggio proposto:
-
-> Vorrei sviluppare individualmente un classificatore per Pavia University che combini una CNN per feature locali e un Transformer leggero per contesto globale, partendo da una baseline CNN. Se il tempo lo consente, aggiungerei channel-spatial attention e successivamente sample amplification, avvicinandomi alla versione CTA-Net indicata per gruppi di tre. Il training verrà eseguito su Kaggle. Propongo di lasciare adaptive band pruning fuori dallo scope base. Il progetto e il paper sono adeguati per il lavoro individuale?
-
-**Artefatto:** approvazione scritta dello scope. Durante l'attesa si può completare il Livello 0.
-
-## Livello 0: Fondamenta dati
-
-**Tempo:** 1–2 giorni.
+## Livello 0: dataset ed esplorazione
 
 ### Obiettivo
 
-Ottenere pipeline dati corretta e ispezionabile.
+Verificare contenuto e struttura di Pavia University.
 
 ### Attività
 
-1. creare ambiente Python e fissare dipendenze;
-2. scaricare Pavia University e ground truth;
-3. visualizzare una banda, ground truth e distribuzione delle classi;
-4. dividere scena in blocchi non sovrapposti;
-5. assegnare interi blocchi a training, validation e test con seed fisso;
-6. verificare copertura delle classi e applicare fascia di sicurezza;
-7. salvare blocchi e coordinate dello split;
-8. normalizzare dati senza usare informazioni del test;
-9. applicare PCA senza adattarla sul test;
-10. estrarre patch centrate sui pixel etichettati idonei;
-11. associare ogni patch alla classe del solo pixel centrale;
-12. creare Dataset e DataLoader;
-13. verificare forme, etichette e assenza di augmentation nel test.
+1. caricare `PaviaU.mat` e `PaviaU_gt.mat`;
+2. verificare shape, dtype e intervalli;
+3. visualizzare alcune bande;
+4. visualizzare ground truth;
+5. contare pixel per classe;
+6. mostrare firme spettrali di alcuni pixel;
+7. documentare classi e sbilanciamento.
 
-### Perché
+### Artefatto disponibile
 
-- normalizzazione stabilizza addestramento;
-- PCA riduce rumore, memoria e costo;
-- patch fornisce contesto locale per classificare pixel centrale;
-- split a blocchi limita contaminazione spaziale tra training e test;
-- fascia di sicurezza impedisce alle patch di attraversare confini tra gruppi;
-- split salvato rende confronti validi;
-- controlli automatici evitano errori silenziosi.
+Prima parte del notebook con dataset, figure e descrizione del problema.
 
-### Artefatto consegnabile
+### Stato
 
-Pipeline riproducibile, analisi del dataset e figure descrittive. Non è ancora il progetto completo, ma costituisce una prima sezione solida del notebook.
+Caricamento, shape e conteggio classi sono già completati.
 
-### Limiti da dichiarare
-
-Split a blocchi può produrre classi sbilanciate o assenti in un gruppo, perché classi sono concentrate in regioni specifiche. Assegnazione dei blocchi deve quindi essere controllata usando distribuzione delle classi, non uno shuffle cieco. Fascia di sicurezza riduce numero di campioni disponibili ma protegge indipendenza spaziale.
-
-## Livello 1: Baseline CNN 3D
-
-**Tempo aggiuntivo:** 1 giorno.
+## Livello 1: pipeline patch e split del paper
 
 ### Obiettivo
 
-Produrre primo classificatore HSI completo.
+Creare campioni corretti e riproducibili.
 
-```text
-patch HSI
-Conv3D + BatchNorm + ReLU
-Conv3D + BatchNorm + ReLU
-global pooling
-linear classifier
-```
+### Attività
 
-### Perché
+1. raccogliere coordinate di tutti i pixel con etichetta da `1` a `9`;
+2. per ogni classe, mescolare coordinate con seed fisso;
+3. selezionare `10` coordinate train e `5` validation;
+4. assegnare tutte le coordinate rimanenti al test;
+5. estrarre patch `15 x 15 x 103` centrate sulle coordinate;
+6. gestire bordi con una regola di padding documentata;
+7. creare `Dataset` e `DataLoader` PyTorch;
+8. verificare shape, etichette e assenza di sovrapposizione tra coordinate centrali;
+9. salvare split e configurazione.
 
-CNN 3D apprende congiuntamente pattern locali spaziali e spettrali. Baseline verifica preprocessing, training, checkpoint e metriche prima di introdurre Transformer.
+### Test minimi
 
-### Prove minime
+- ogni classe ha esattamente `10` campioni train;
+- ogni classe ha esattamente `5` campioni validation;
+- coordinate train, validation e test sono disgiunte;
+- patch centrale corrisponde alla coordinata selezionata;
+- target corrisponde alla ground truth del centro;
+- classe `0` non compare tra i target.
 
-- modello riesce a sovra-adattarsi a un batch piccolo;
+### Artefatto disponibile
+
+Pipeline few-shot completa e ispezionabile.
+
+## Livello 2: CNN-only baseline
+
+### Obiettivo
+
+Ottenere rapidamente un classificatore end-to-end e validare tutta la pipeline.
+
+La baseline deve derivare dal ramo CNN del CT block, non da una rete 3D estranea al paper.
+
+Ramo CNN del paper:
+
+- quattro branch paralleli;
+- convoluzione `1x1`;
+- convoluzione `3x3`;
+- due convoluzioni `3x3` impilate;
+- tre convoluzioni `3x3` impilate;
+- BatchNorm e GELU tra convoluzioni impilate;
+- concatenazione dei branch;
+- convoluzione `1x1`;
+- residual connection;
+- global average pooling;
+- fully connected classifier.
+
+### Verifiche
+
+- il modello sovra-adatta un batch piccolo;
 - training loss diminuisce;
-- miglior checkpoint si ricarica;
-- valutazione produce tutte le metriche;
-- curve training/validation vengono salvate.
+- checkpoint migliore viene ricaricato;
+- metriche test vengono calcolate;
+- mappa di classificazione viene generata.
 
-### Artefatto consegnabile
+### Artefatto disponibile
 
-Sistema end-to-end per classificazione HSI, con baseline quantitativa e confusion matrix.
+Primo progetto completo e presentabile, anche se non soddisfa ancora il TLDR CNN-Transformer.
 
-### Stato rispetto al TL;DR
-
-Parziale: classifica HSI e apprende feature locali, ma non include ancora contesto globale del Transformer.
-
-## Livello 2: CNN + Transformer leggero
-
-**Tempo aggiuntivo:** 1–2 giorni.
+## Livello 3: CT block
 
 ### Obiettivo
 
-Raggiungere nucleo del progetto espresso dal TL;DR.
+Soddisfare il nucleo del progetto: CNN locale e Transformer non locale.
 
-```text
-patch HSI
-CNN spectral-spatial encoder
-feature map convertita in token
-positional encoding
-1 Transformer encoder block
-global pooling
-linear classifier
-```
+### Architettura
 
-Configurazione iniziale:
+1. convoluzione iniziale per portare feature a `128` canali;
+2. ramo CNN multiscala;
+3. ramo Transformer in parallelo;
+4. concatenazione delle feature;
+5. convoluzione `1x1` per ridurre i canali;
+6. residual connection con input del CT block;
+7. global average pooling;
+8. fully connected classifier.
 
-- embedding dimension: 64;
-- attention heads: 4;
-- Transformer blocks: 1;
-- MLP ratio: 2;
-- dropout: 0.1.
+Il Transformer del paper deriva da Conformer e contiene:
 
-### Perché
-
-- CNN estrae strutture locali;
-- token rappresentano regioni o feature della patch;
-- positional encoding conserva informazione sulla posizione;
-- self-attention collega token distanti;
-- Transformer piccolo limita overfitting e costo.
-
-Il CT block deve terminare con pooling e classificatore. Un blocco isolato non produce una classificazione valutabile.
+- Feed Forward Module;
+- Multi-Head Self-Attention;
+- CNN module interno;
+- secondo Feed Forward Module;
+- residual connection per ogni modulo;
+- relative positional encoding nella self-attention.
 
 ### Esperimento
 
-Confrontare, sullo stesso split:
+Confrontare sullo stesso split:
 
-1. CNN 3D;
-2. CNN + Transformer.
+1. CNN-only;
+2. CT block.
 
-Domanda sperimentale: aggiungere contesto globale migliora classificazione rispetto alle sole feature locali?
+### Domanda
 
-### Artefatto consegnabile
+Il ramo Transformer migliora la classificazione rispetto alle sole feature locali?
 
-Progetto minimo completo e coerente col TL;DR: modello ibrido, confronto con baseline, metriche e analisi.
+### Artefatto disponibile
 
-### Prima stop condition
+Progetto individuale minimo completo e coerente con il TLDR.
 
-Se scadenza è vicina, fermarsi qui. Consolidare risultati, README e notebook invece di aggiungere moduli fragili.
+### Stop condition
 
-## Livello 3: Channel-spatial attention
+Se il tempo è limitato, fermarsi qui. Consolidare codice, notebook, risultati e slide.
 
-**Tempo aggiuntivo:** 0,5–1 giorno.
+## Livello 4: channel-spatial attention
 
 ### Obiettivo
 
-Avvicinare modello a CTA-Net senza cambiare pipeline.
+Replicare Att block del paper dopo CT block.
 
-Aggiungere modulo leggero ispirato a CBAM:
+### Channel attention
 
-1. channel attention pesa feature channel;
-2. spatial attention pesa posizioni della patch;
-3. feature ricalibrate passano a pooling e classificatore.
+- apprende un peso per ogni feature channel;
+- usa convoluzione 1D con kernel `3`;
+- moltiplica pesi e feature;
+- applica residual connection.
 
-### Perché
+### Spatial attention
 
-- non tutti i feature channel sono ugualmente informativi;
-- non tutte le posizioni della patch aiutano il pixel centrale;
-- attention apprende una selezione morbida end-to-end.
+- calcola massimo, minimo, media e deviazione standard lungo i canali;
+- elabora statistiche spaziali;
+- usa convoluzione `5x5` e PReLU;
+- concatena feature;
+- usa convoluzione `1x1`;
+- moltiplica mappa di pesi e input;
+- applica residual connection.
 
-### Esperimento incrementale
+### Esperimento
 
 Confrontare:
 
-1. CNN 3D;
-2. CNN + Transformer;
-3. CNN + Transformer + channel-spatial attention.
+1. CNN-only;
+2. CT;
+3. CT + CSA.
 
-Domanda sperimentale: ricalibrare canali e spazio aggiunge valore oltre al CT block?
+### Artefatto disponibile
 
-### Artefatto consegnabile
+Architettura CNN-Transformer-Attention quasi completa.
 
-Versione CTA compatta, con ablation chiara dei due contributi principali.
+## Livello 5: sample amplification
+
+### Obiettivo
+
+Completare replica metodologica di CTA-Net su Pavia University.
+
+Applicare solo ai campioni training:
+
+1. rumore gaussiano fuori dalla regione centrale della patch;
+2. rotazione casuale della patch;
+3. somma lineare tra patch appartenenti alla stessa classe;
+4. mantenimento dei campioni originali.
+
+Validation e test non vengono aumentati.
+
+Quantità di campioni generati, intensità del rumore e dettagli non completamente specificati dal paper devono diventare parametri documentati.
+
+### Esperimento
+
+Confrontare:
+
+1. CT;
+2. CT + CSA;
+3. SA + CT + CSA, cioè CTA-Net.
+
+### Artefatto disponibile
+
+Replica della metodologia CTA-Net su Pavia University, con differenze implementative dichiarate.
 
 ### Seconda stop condition
 
-Se modello completo funziona ma tempo è poco, fermarsi. Eseguire 3 seed, produrre tabella finale e completare notebook.
+Fermarsi qui prima di aggiungere nuove idee. Consolidare replica, metriche, notebook e slide.
 
-## Livello 4: Versione estesa per gruppi di tre
+## Livello 6: estensione per tre studenti
 
-**Tempo aggiuntivo:** 2–4 giorni.
+Iniziare solo dopo replica funzionante su Pavia.
 
-Iniziare solo quando livelli 0–3 sono completi e documentati.
+### Replica sperimentale completa
 
-### 4A. Sample amplification
+- dieci split casuali;
+- media e deviazione standard;
+- ablation completa SA, CT e CSA;
+- analisi con `5, 10, 15, 20, 25, 30, 40, 50, 100` campioni per classe;
+- analisi numero feature channel;
+- analisi patch size da `7 x 7` a `23 x 23`;
+- confronto con almeno alcuni metodi pubblicati riproducibili.
 
-Implementare una sola strategia controllata. Prima scelta: interpolazione tra due patch della stessa classe oppure mixup intra-classe.
+### Estensione dataset
 
-Confrontare modello completo:
+Aggiungere uno tra:
 
-- senza sample amplification;
-- con sample amplification.
+- WHU-Hi-HongHu;
+- WHU-Hi-HanChuan.
 
-Perché: CTA-Net nasce per pochi esempi etichettati. Espandere training set mira a ridurre overfitting.
+Un secondo dataset ha priorità maggiore di molte piccole varianti architetturali, perché verifica generalizzazione.
 
-Non applicare trasformazione a validation o test. Non generare campioni prima dello split.
+### Esperimento robusto opzionale
 
-### 4B. Ablation completa
+Confrontare split casuale del paper con split spaziale a blocchi. Presentare lo split spaziale come test aggiuntivo, non come replica diretta.
 
-| Modello | CNN | Transformer | Attention | Amplification |
-|---|---:|---:|---:|---:|
-| Baseline | sì | no | no | no |
-| CT | sì | sì | no | no |
-| CTA | sì | sì | sì | no |
-| CTA estesa | sì | sì | sì | sì |
+## Livello 7: Honors
 
-Riportare media e deviazione standard su 3 seed.
+### Obiettivo
 
-### 4C. Analisi finale
+Adaptive spectral band pruning guidato da attention.
 
-- metriche globali e per classe;
-- confusion matrix;
-- curve di apprendimento;
-- costo in parametri e latenza;
-- eventuale mappa di classificazione;
-- discussione delle classi con spettri simili.
+Il channel attention del paper pesa feature interne, non direttamente le 103 bande originali. Honors richiede quindi un meccanismo aggiuntivo prima della convoluzione iniziale.
 
-### Artefatto consegnabile
+Possibile soluzione:
 
-Versione vicina allo scope assegnato a gruppi di tre: data augmentation per few-sample, CT block, channel-spatial attention e ablation completa.
+1. aggiungere gate apprendibile per ogni banda;
+2. combinare gate e informazioni del Transformer;
+3. stimare importanza media delle 103 bande;
+4. mantenere diverse percentuali di bande;
+5. ricostruire input e primo layer con meno bande;
+6. fare fine-tuning;
+7. misurare OA, AA, Kappa, FLOPs e latenza;
+8. tracciare accuracy rispetto alla percentuale di bande eliminate.
 
-## Livello 5: Honors: adaptive band pruning
+Azzerare bande mantenendo input da 103 canali non riduce realmente FLOPs. Il modello finale deve elaborare un numero minore di bande.
 
-**Tempo aggiuntivo:** almeno 2–3 giorni.
+Questa estensione richiede approvazione preventiva per Honors.
 
-Questa fase non appartiene al piano base. Iniziarla solo quando codice, esperimenti principali, notebook e slide sono quasi completi.
+## Ordine di priorità
 
-### Problema con PCA
-
-PCA miscela bande originali in componenti. Eliminare una componente PCA non equivale a eliminare una banda spettrale. Per vero spectral band pruning serve una variante che riceve bande originali.
-
-### Versione minima
-
-1. addestrare modello senza PCA;
-2. ottenere importanza media delle bande tramite attention o gate apprendibili;
-3. ordinare bande;
-4. mantenere 100%, 75%, 50% e 25% delle bande;
-5. fare breve fine-tuning;
-6. misurare OA, macro-F1, latenza e FLOPs;
-7. tracciare accuracy rispetto a bande rimosse.
-
-Azzerare bande senza ridurre forma del tensore non produce speedup reale. Per dichiarare accelerazione, input e modello devono elaborare meno bande.
-
-### Artefatto consegnabile
-
-Grafico accuracy-costo e discussione del compromesso tra informazione spettrale e velocità.
-
-## Calendario tecnico a checkpoint
-
-### Dopo 2 giorni
-
-- Livello 0 completo;
-- figure del dataset;
-- split salvato;
-- DataLoader verificato.
-
-### Dopo 3 giorni
-
-- Livello 1 completo;
-- primo classificatore;
-- metriche e confusion matrix.
-
-### Dopo 5 giorni
-
-- Livello 2 completo;
-- TL;DR soddisfatto;
-- confronto CNN contro CNN-Transformer.
-
-### Dopo 6 giorni
-
-- Livello 3 completo;
-- confronto dei tre modelli.
-
-### Dopo 7 giorni
-
-- 3 seed se possibili;
-- tabella finale;
-- README, notebook e slide consolidati.
-
-### Tempo ulteriore
-
-- prima Livello 4;
-- poi Honors;
-- mai iniziare Honors con notebook o slide principali incompleti.
-
-## Ordine di priorità se manca tempo
-
-1. correttezza di dati e split;
-2. baseline end-to-end;
-3. CNN + Transformer;
-4. metriche e notebook;
-5. channel-spatial attention;
-6. tre seed;
+1. pipeline patch corretta;
+2. split few-shot riproducibile;
+3. CNN-only funzionante;
+4. CT block;
+5. metriche, mappa e notebook;
+6. channel-spatial attention;
 7. sample amplification;
-8. confronto opzionale con split casuale per pixel usato da parte della letteratura;
-9. Honors pruning.
+8. più seed e ablation;
+9. secondo dataset;
+10. Honors pruning.
 
-## Non-obiettivi iniziali
+## Checkpoint temporali
 
-- secondo dataset;
-- replica identica del paper;
-- grid search estesa;
-- più varianti di Transformer;
-- più varianti di attention;
-- confronto con molti modelli esterni;
-- GUI o deployment;
-- pruning prima della conclusione di notebook e slide principali.
+### Checkpoint 1
 
-## Struttura progressiva del notebook
+- esplorazione dataset completa;
+- split salvato;
+- patch e DataLoader verificati.
 
-Scrivere durante sviluppo:
+### Checkpoint 2
 
-- Livello 0 completa sezioni dataset, protocollo e preprocessing;
-- Livello 1 completa baseline e setup sperimentale;
-- Livello 2 completa metodo principale e primo confronto;
-- Livello 3 completa CTA compatta e ablation;
-- Livello 4 amplia few-sample study;
-- Livello 5 diventa estensione Honors separata.
+- CNN-only allenata;
+- metriche e mappa disponibili.
 
-Così ogni checkpoint lascia anche notebook parzialmente pronto, non solo codice.
+### Checkpoint 3
 
-## Struttura del notebook finale
+- CT block allenato;
+- confronto CNN contro CT;
+- obiettivo individuale raggiunto.
 
-Usare un notebook principale, pensato per essere letto e rieseguito:
+### Checkpoint 4
 
-1. titolo, nome, matricola e corso;
-2. obiettivo del progetto;
-3. paper selezionato e contributi rilevanti;
-4. background su HSI, CNN, Transformer e attention usata;
-5. dataset e distribuzione delle classi;
-6. preprocessing e protocollo few-sample;
-7. architetture, con schema e motivazione;
-8. configurazione degli esperimenti;
-9. risultati con tabelle, curve e confusion matrix;
-10. interpretazione dei risultati;
-11. limiti e vincoli computazionali di Kaggle;
-12. conclusioni e sviluppi futuri;
-13. riferimenti a paper, dataset e repository;
-14. istruzioni di riproducibilità.
+- channel-spatial attention;
+- confronto CT contro CT + CSA.
 
-Il notebook può importare moduli dal repository. Deve però mostrare chiaramente flusso, configurazione e risultati. Per la consegna, salvare anche output delle celle essenziali, così il docente può leggere risultati senza rilanciare training.
+### Checkpoint 5
 
-Separare due modalità:
+- sample amplification;
+- CTA-Net completa su Pavia;
+- ablation minima.
 
-- `FAST_DEV`: pochi campioni o una sola epoca per verificare notebook;
-- `FULL_TRAIN`: configurazione usata per risultati dichiarati.
+### Checkpoint 6
 
-La modalità veloce serve a provare esecuzione completa. Non presentare sue metriche come risultati finali.
+- esperimenti estesi oppure Honors;
+- nessuna estensione prima di aver consolidato notebook e slide.
 
-## Struttura delle slide
+## Notebook finale
+
+1. titolo, autore, matricola e corso;
+2. obiettivo e paper di riferimento;
+3. teoria HSI e classificazione pixel-wise;
+4. CNN, Transformer, CT block e attention;
+5. Pavia University e distribuzione classi;
+6. patch e protocollo few-shot;
+7. implementazione incrementale;
+8. configurazione sperimentale;
+9. risultati CNN, CT e CTA;
+10. ablation;
+11. mappe e confusion matrix;
+12. limiti e differenze dal paper;
+13. conclusioni;
+14. riproducibilità e riferimenti.
+
+## Slide
 
 Preparare 6 slide principali:
 
-1. titolo, autore, corso e data;
-2. motivazione, HSI e obiettivo CNN locale + Transformer globale;
-3. metodo e architettura incrementale;
-4. dataset, split e configurazione Kaggle;
-5. risultati e ablation con una tabella e una figura;
-6. conclusioni, limiti e sviluppo successivo.
+1. titolo e obiettivo;
+2. HSI e motivazione few-shot;
+3. architettura CTA-Net;
+4. dataset e protocollo;
+5. risultati incrementali;
+6. conclusioni e limiti.
 
-Settima slide opzionale: adaptive pruning o altri sviluppi futuri. Non inserirla come risultato se non è stato implementato e valutato.
+Settima slide opzionale: estensione per tre studenti oppure Honors.
 
-Per una presentazione di circa 5 minuti, dedicare circa 40–50 secondi per slide. Evitare dettagli di codice; mostrare scelte, prove e interpretazione.
+## Non obiettivi iniziali
 
-## Piano a ritroso dalla consegna
+- split spaziale come protocollo principale;
+- classificazione densa di tile `10 x 10`;
+- PCA obbligatoria;
+- CNN 3D non collegata al paper;
+- replica di tutti i modelli concorrenti;
+- grid search estesa;
+- secondo dataset prima del completamento su Pavia;
+- pruning prima della replica CTA-Net.
 
-Indicare con `T` la scadenza ufficiale di consegna.
+## Criterio di completamento di ogni livello
 
-- `T-7` o prima: approvazione docente e Livello 0;
-- `T-6`: baseline completa;
-- `T-5` e `T-4`: CNN + Transformer completa;
-- `T-3`: ultima estensione ammessa e avvio run finali;
-- `T-2`: congelare architettura, raccogliere risultati e completare notebook;
-- `T-1`: riesecuzione rapida, controllo riproducibilità, slide e prova orale;
-- `T`: solo controllo e consegna, senza nuovi esperimenti.
+Un livello è completo quando:
 
-Se un run fallisce dopo `T-2`, usare ultimo checkpoint valido. Non cambiare architettura all'ultimo giorno.
-
-## Definizione di completamento per possibile consegna
-
-Prima di fermarsi a qualsiasi livello, verificare:
-
-- repository parte da ambiente pulito seguendo README;
-- notebook Kaggle conserva output finali essenziali;
-- notebook indica come abilitare acceleratore e dove trovare dati;
-- dati non sono inclusi in Git;
-- split e seed sono riproducibili;
-- checkpoint migliore viene salvato;
-- valutazione usa test set una sola volta per risultato finale;
-- tabella indica chiaramente moduli presenti;
-- limiti metodologici sono dichiarati;
-- slide rispettano limite di 5–7 pagine;
-- presentazione è stata provata entro circa 5 minuti;
-- lavoro incompleto compare come sviluppo futuro, non come risultato ottenuto.
+1. codice eseguibile da configurazione salvata;
+2. test minimi superati;
+3. checkpoint ricaricabile;
+4. metriche prodotte;
+5. almeno una figura o tabella pronta per notebook;
+6. differenze rispetto al paper documentate.
