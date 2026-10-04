@@ -46,3 +46,9 @@ class SplitName(StrEnum):
 class RunMode(StrEnum):
     SMOKE = "smoke"
     FULL = "full"
+
+
+class LRSchedulingType(StrEnum):
+    FIXED = "fixed"
+    COSINEANNEALING = "cosine_annealing"
+    REDUCELRONPLATEAU = "reduce_lr_on_plateau"
