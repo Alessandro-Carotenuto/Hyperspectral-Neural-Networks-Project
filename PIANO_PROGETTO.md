@@ -189,9 +189,20 @@ Le figure ottenute sono già riutilizzabili nel notebook finale.
 
 ## Livello 1: pipeline patch e split del paper
 
-### Stato: prossimo
+### Stato: completato
 
-Il livello non è ancora iniziato. Prima operazione: creare e salvare lo split delle coordinate secondo il protocollo few-shot del paper. L'estrazione delle patch avviene solo dopo aver verificato lo split.
+Completato nel notebook:
+
+- split few-shot riproducibile con seed `42`;
+- `10` coordinate train e `5` validation per ciascuna classe;
+- tutte le restanti `42.641` coordinate etichettate assegnate al test;
+- split salvato in tre CSV sotto `data/splits/seed_42/`;
+- verifica di conteggi, copertura, label e assenza di sovrapposizioni;
+- normalizzazione min-max per banda sull'intera scena, documentata come preprocessing transduttivo;
+- reflect padding con cubo raw invariato;
+- estrazione on-demand di patch `15 x 15 x 103`;
+- `Dataset` e `DataLoader` PyTorch con batch size `32`;
+- conversione dei target originali `1-9` negli indici PyTorch `0-8`.
 
 ### Obiettivo
 
