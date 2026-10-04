@@ -235,6 +235,30 @@ Pipeline few-shot completa e ispezionabile.
 
 ## Livello 2: CNN-only baseline
 
+### Stato: completato
+
+Completato nel notebook e nei moduli Python:
+
+- convoluzione iniziale da `103` bande a `128` feature channel;
+- ramo CNN multiscala del CT block con quattro branch paralleli;
+- concatenazione, convoluzione `1x1` e residual connection;
+- global average pooling e classificatore a `9` logits;
+- forward/backward sanity check e overfitting test su un piccolo batch;
+- training con Adam, checkpoint migliore e tre strategie di learning rate;
+- valutazione con OA, AA, Kappa, accuracy per classe e confusion matrix;
+- confusion matrix normalizzata e classification map completa;
+- progressi periodici durante l'inferenza sul test;
+- salvataggio di configurazione e metriche in un report JSON;
+- split esplorativi `RANDOM_NO_CENTER_OVERLAP` e
+  `RANDOM_NO_OVERLAP` per misurare il bias dovuto all'overlap spaziale;
+- notebook usato come main leggibile per configurazione, chiamate,
+  controlli e interpretazione dei risultati;
+- codice riutilizzabile separato in `data.py`, `models.py`,
+  `training.py`, `evaluation.py` e `plotting.py`.
+
+I checkpoint creati prima del refactor restano compatibili perché i nomi e
+la struttura dei layer non sono cambiati.
+
 ### Obiettivo
 
 Ottenere rapidamente un classificatore end-to-end e validare tutta la pipeline.
