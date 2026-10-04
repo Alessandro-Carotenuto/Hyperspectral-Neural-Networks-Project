@@ -41,6 +41,13 @@ class SplitName(StrEnum):
     TRAIN = "train"
     VALIDATION = "validation"
     TEST = "test"
+    EXCLUDED = "excluded"
+
+
+class DataSplitType(StrEnum):
+    RANDOM = "random"
+    RANDOM_NO_CENTER_OVERLAP = "random_no_center_overlap"
+    RANDOM_NO_OVERLAP = "random_no_overlap"
 
 
 class RunMode(StrEnum):
