@@ -97,6 +97,7 @@ def build_checkpoint_path(
     transformer_heads,
     transformer_expansion_factor,
     transformer_dropout,
+    weight_decay=0.0,
     transformer_ffn_residual_scale=0.5,
     transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
     transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
@@ -160,6 +161,9 @@ def build_checkpoint_path(
         f"split{split_seed}_{split_type.value}_"
         f"train{training_seed}.pt"
     )
+    if weight_decay:
+        weight_decay_name = f"{weight_decay:g}".replace(".", "p")
+        filename = filename.removesuffix(".pt") + f"_wd{weight_decay_name}.pt"
     return checkpoint_directory / filename
 
 
@@ -232,12 +236,15 @@ def fit_model(
     scheduling_type,
     checkpoint_path,
     checkpoint_metadata,
+    weight_decay=0.0,
     log_every=10,
 ):
     """Train a model, save the best checkpoint and return its history."""
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(
-        model.parameters(), lr=learning_rate
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
     )
     scheduler = build_lr_scheduler(
         optimizer, scheduling_type, epochs
