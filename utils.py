@@ -60,6 +60,11 @@ class TrainingSeedMode(StrEnum):
     MULTI_TRAIN_SEED = "multi_train_seed"
 
 
+class SampleAmplificationMode(StrEnum):
+    DISABLED = "disabled"
+    CTA_NET = "cta_net"
+
+
 class LRSchedulingType(StrEnum):
     FIXED = "fixed"
     COSINEANNEALING = "cosine_annealing"

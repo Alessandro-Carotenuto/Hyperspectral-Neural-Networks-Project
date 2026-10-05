@@ -1,8 +1,14 @@
 import numpy as np
 import torch
+import torch.nn.functional as functional
 from torch.utils.data import DataLoader, Dataset
 
-from utils import DataSplitType, InputNormalization, SplitName
+from utils import (
+    DataSplitType,
+    InputNormalization,
+    SampleAmplificationMode,
+    SplitName,
+)
 
 
 def build_forbidden_test_center_mask(image_shape, train_coordinates, radius):
@@ -153,6 +159,191 @@ class HyperspectralPatchDataset(Dataset):
             dtype=torch.long,
         )
         return patch_tensor, target_tensor
+
+
+class MaterializedPatchDataset(Dataset):
+    """Store a finite patch set produced for one training run."""
+
+    def __init__(self, patches, targets, amplification_metadata):
+        self.patches = patches
+        self.targets = targets.numpy()
+        self.amplification_metadata = amplification_metadata
+
+    def __len__(self):
+        return len(self.targets)
+
+    def __getitem__(self, index):
+        return self.patches[index], torch.tensor(
+            self.targets[index], dtype=torch.long
+        )
+
+
+def rotate_patch_nearest(patch, angle_degrees):
+    """Rotate all bands around the patch center with zero fill."""
+    angle_radians = torch.deg2rad(
+        torch.tensor(angle_degrees, dtype=patch.dtype)
+    )
+    cosine = torch.cos(angle_radians)
+    sine = torch.sin(angle_radians)
+    affine = torch.tensor(
+        [[cosine, -sine, 0.0], [sine, cosine, 0.0]],
+        dtype=patch.dtype,
+    ).unsqueeze(0)
+    batched_patch = patch.unsqueeze(0)
+    grid = functional.affine_grid(
+        affine, batched_patch.shape, align_corners=False
+    )
+    return functional.grid_sample(
+        batched_patch,
+        grid,
+        mode="nearest",
+        padding_mode="zeros",
+        align_corners=False,
+    ).squeeze(0)
+
+
+def amplify_training_dataset(
+    dataset,
+    *,
+    mode,
+    seed,
+    central_region_size=3,
+    gaussian_noise_standard_deviation=0.04,
+):
+    """Materialize the paper-faithful CTA-Net training augmentation."""
+    mode = SampleAmplificationMode(mode)
+    if mode == SampleAmplificationMode.DISABLED:
+        return dataset
+
+    central_region_size = int(central_region_size)
+    noise_standard_deviation = float(
+        gaussian_noise_standard_deviation
+    )
+    if central_region_size < 1 or central_region_size % 2 == 0:
+        raise ValueError("SA central region size must be a positive odd number")
+    if noise_standard_deviation < 0:
+        raise ValueError("SA Gaussian noise standard deviation cannot be negative")
+
+    original_patches = []
+    original_targets = []
+    for patch, target in dataset:
+        original_patches.append(patch.detach().clone())
+        original_targets.append(int(target))
+    if not original_patches:
+        raise ValueError("Cannot amplify an empty training dataset")
+
+    originals = torch.stack(original_patches)
+    targets = torch.tensor(original_targets, dtype=torch.long)
+    patch_height, patch_width = originals.shape[-2:]
+    if patch_height != patch_width:
+        raise ValueError("SA requires square patches")
+    if central_region_size > patch_height:
+        raise ValueError("SA central region cannot exceed the patch size")
+
+    generator = torch.Generator().manual_seed(int(seed))
+    noise = torch.randn(
+        originals.shape,
+        generator=generator,
+        dtype=originals.dtype,
+    ) * noise_standard_deviation
+    center_start = (patch_height - central_region_size) // 2
+    center_end = center_start + central_region_size
+    noise[:, :, center_start:center_end, center_start:center_end] = 0
+    noisy_patches = originals + noise
+
+    angles = (
+        torch.rand(len(originals), generator=generator) * 360.0 - 180.0
+    )
+    rotated_patches = torch.stack([
+        rotate_patch_nearest(patch, float(angle))
+        for patch, angle in zip(originals, angles)
+    ])
+
+    linear_patches = []
+    linear_targets = []
+    anchor_indices = {}
+    for class_id in torch.unique(targets, sorted=True).tolist():
+        class_indices = torch.nonzero(
+            targets == class_id, as_tuple=True
+        )[0]
+        if len(class_indices) < 2:
+            raise ValueError(
+                "CTA-Net linear SA requires at least two samples per class"
+            )
+        anchor_offset = int(
+            torch.randint(
+                len(class_indices), (1,), generator=generator
+            ).item()
+        )
+        anchor_index = int(class_indices[anchor_offset])
+        anchor_indices[int(class_id)] = anchor_index
+        for sample_index in class_indices.tolist():
+            if sample_index == anchor_index:
+                continue
+            linear_patches.append(
+                originals[sample_index] + originals[anchor_index]
+            )
+            linear_targets.append(class_id)
+
+    amplified_patches = torch.cat(
+        (
+            originals,
+            noisy_patches,
+            rotated_patches,
+            torch.stack(linear_patches),
+        )
+    )
+    amplified_targets = torch.cat(
+        (
+            targets,
+            targets,
+            targets,
+            torch.tensor(linear_targets, dtype=torch.long),
+        )
+    )
+    metadata = {
+        "mode": mode.value,
+        "seed": int(seed),
+        "central_region_size": central_region_size,
+        "gaussian_noise_standard_deviation": noise_standard_deviation,
+        "rotation_degrees": [-180.0, 180.0],
+        "rotation_interpolation": "nearest",
+        "rotation_fill": 0.0,
+        "linear_mode": "direct_sum",
+        "clip_after_transform": False,
+        "original_samples": len(originals),
+        "noise_samples": len(noisy_patches),
+        "rotation_samples": len(rotated_patches),
+        "linear_samples": len(linear_patches),
+        "total_samples": len(amplified_targets),
+        "anchor_indices_by_zero_based_class": anchor_indices,
+        "rotation_angles_degrees": angles.tolist(),
+    }
+    return MaterializedPatchDataset(
+        amplified_patches, amplified_targets, metadata
+    )
+
+
+def create_run_datasets(
+    datasets,
+    *,
+    sample_amplification_mode,
+    training_seed,
+    central_region_size=3,
+    gaussian_noise_standard_deviation=0.04,
+):
+    """Create per-run datasets while preserving validation and test."""
+    run_datasets = dict(datasets)
+    run_datasets[SplitName.TRAIN.value] = amplify_training_dataset(
+        datasets[SplitName.TRAIN.value],
+        mode=sample_amplification_mode,
+        seed=training_seed,
+        central_region_size=central_region_size,
+        gaussian_noise_standard_deviation=(
+            gaussian_noise_standard_deviation
+        ),
+    )
+    return run_datasets
 
 
 def collect_coordinates_by_class(ground_truth, labeled_class_ids):

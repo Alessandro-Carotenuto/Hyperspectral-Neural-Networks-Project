@@ -8,6 +8,7 @@ from utils import (
     InputNormalization,
     LRSchedulingType,
     ModelArchitecture,
+    SampleAmplificationMode,
     TrainingSeedMode,
     TransformerPositionEncoding,
 )
@@ -132,6 +133,7 @@ def build_checkpoint_path(
     split_seed,
     split_type,
     training_seed,
+    sample_amplification_mode=SampleAmplificationMode.DISABLED,
 ):
     """Build a checkpoint path containing the experiment identity."""
     architecture_name = architecture.value
@@ -185,6 +187,14 @@ def build_checkpoint_path(
     if weight_decay:
         weight_decay_name = f"{weight_decay:g}".replace(".", "p")
         filename = filename.removesuffix(".pt") + f"_wd{weight_decay_name}.pt"
+    sample_amplification_mode = SampleAmplificationMode(
+        sample_amplification_mode
+    )
+    if sample_amplification_mode != SampleAmplificationMode.DISABLED:
+        filename = (
+            filename.removesuffix(".pt")
+            + f"_sa-{sample_amplification_mode.value}.pt"
+        )
     return checkpoint_directory / filename
 
 
