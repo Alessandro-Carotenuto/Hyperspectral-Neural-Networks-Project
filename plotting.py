@@ -75,7 +75,7 @@ def plot_mean_spectral_signatures(
     plt.show()
 
 
-def plot_training_curves(history, run_name):
+def plot_training_curves(history, run_name, model_name):
     """Plot loss and accuracy histories."""
     epochs = range(1, len(history["train_loss"]) + 1)
     figure, axes = plt.subplots(1, 2, figsize=(12, 4))
@@ -103,7 +103,7 @@ def plot_training_curves(history, run_name):
     axes[1].grid(alpha=0.3)
     axes[1].legend()
 
-    figure.suptitle(f"CNN-only training curves ({run_name} run)")
+    figure.suptitle(f"{model_name} training curves ({run_name} run)")
     plt.tight_layout()
     plt.show()
 
@@ -111,13 +111,14 @@ def plot_training_curves(history, run_name):
 def plot_confusion_matrix(
     confusion,
     display_names,
+    model_name,
     *,
     normalized=False,
 ):
     """Plot a raw or row-normalized confusion matrix."""
     matrix = confusion
     values_format = None
-    title = "CNN-Only Test Confusion Matrix"
+    title = f"{model_name} Test Confusion Matrix"
     if normalized:
         row_totals = confusion.sum(axis=1, keepdims=True)
         matrix = np.divide(
@@ -127,7 +128,7 @@ def plot_confusion_matrix(
             where=row_totals != 0,
         )
         values_format = ".2f"
-        title = "CNN-Only Normalized Test Confusion Matrix"
+        title = f"{model_name} Normalized Test Confusion Matrix"
 
     figure, axis = plt.subplots(figsize=(11, 9))
     ConfusionMatrixDisplay(
@@ -150,6 +151,7 @@ def plot_classification_map(
     classification_map,
     class_names,
     num_classes,
+    model_name,
 ):
     """Plot ground truth and the predicted classification map."""
     colors = ["black"] + list(
@@ -161,7 +163,7 @@ def plot_classification_map(
     for axis, image, title in zip(
         axes,
         [ground_truth, classification_map],
-        ["Ground Truth", "CNN-Only Classification Map"],
+        ["Ground Truth", f"{model_name} Classification Map"],
     ):
         displayed_image = axis.imshow(
             image,
@@ -182,5 +184,7 @@ def plot_classification_map(
     colorbar.ax.set_yticklabels(
         [class_names[label] for label in range(num_classes + 1)]
     )
-    figure.suptitle("Pavia University: Ground Truth vs Prediction")
+    figure.suptitle(
+        f"Pavia University: Ground Truth vs {model_name} Prediction"
+    )
     plt.show()

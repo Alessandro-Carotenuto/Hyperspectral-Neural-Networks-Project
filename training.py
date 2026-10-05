@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from utils import LRSchedulingType
+from utils import LRSchedulingType, ModelArchitecture
 
 
 def build_lr_scheduler(optimizer, scheduling_type, total_epochs):
@@ -87,7 +87,8 @@ def configure_reproducibility(seed):
 def build_checkpoint_path(
     checkpoint_directory,
     *,
-    model_name,
+    architecture,
+    transformer_heads,
     run_name,
     patch_size,
     epochs,
@@ -98,8 +99,13 @@ def build_checkpoint_path(
     training_seed,
 ):
     """Build a checkpoint path containing the experiment identity."""
+    architecture_name = architecture.value
+    if architecture == ModelArchitecture.CNN_TRANSFORMER:
+        architecture_name = (
+            f"{architecture_name}_h{transformer_heads}"
+        )
     filename = (
-        f"{model_name}_{run_name}_p{int(patch_size)}_e{epochs}_"
+        f"{architecture_name}_{run_name}_p{int(patch_size)}_e{epochs}_"
         f"f{feature_channels}_lr{scheduling_type.value}_"
         f"split{split_seed}_{split_type.value}_"
         f"train{training_seed}.pt"

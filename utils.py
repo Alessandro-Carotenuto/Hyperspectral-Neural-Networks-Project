@@ -59,3 +59,15 @@ class LRSchedulingType(StrEnum):
     FIXED = "fixed"
     COSINEANNEALING = "cosine_annealing"
     REDUCELRONPLATEAU = "reduce_lr_on_plateau"
+
+
+class ModelArchitecture(StrEnum):
+    CNN_ONLY = "cnn_only"
+    CNN_TRANSFORMER = "cnn_transformer"
+
+    @property
+    def display_name(self):
+        return {
+            self.CNN_ONLY: "CNN-Only",
+            self.CNN_TRANSFORMER: "CNN-Transformer",
+        }[self]
