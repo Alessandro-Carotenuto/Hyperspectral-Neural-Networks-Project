@@ -55,6 +55,11 @@ class RunMode(StrEnum):
     FULL = "full"
 
 
+class TrainingSeedMode(StrEnum):
+    ONE_TRAIN_SEED = "one_train_seed"
+    MULTI_TRAIN_SEED = "multi_train_seed"
+
+
 class LRSchedulingType(StrEnum):
     FIXED = "fixed"
     COSINEANNEALING = "cosine_annealing"

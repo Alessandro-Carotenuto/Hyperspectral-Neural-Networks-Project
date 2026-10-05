@@ -82,6 +82,39 @@ def calculate_classification_metrics(targets, predictions, num_classes):
     }
 
 
+def aggregate_classification_metrics(run_metrics):
+    """Aggregate classification metrics across independent training runs."""
+    if not run_metrics:
+        raise ValueError("At least one run is required for aggregation")
+
+    scalar_names = ("overall_accuracy", "average_accuracy", "kappa")
+    run_count = len(run_metrics)
+    ddof = 1 if run_count > 1 else 0
+    aggregate = {"num_runs": run_count}
+
+    for metric_name in scalar_names:
+        values = np.asarray(
+            [metrics[metric_name] for metrics in run_metrics],
+            dtype=float,
+        )
+        aggregate[metric_name] = {
+            "mean": float(values.mean()),
+            "std": float(values.std(ddof=ddof)),
+        }
+
+    per_class_values = np.stack(
+        [metrics["per_class_accuracy"] for metrics in run_metrics]
+    )
+    aggregate["per_class_accuracy"] = {
+        "mean": per_class_values.mean(axis=0),
+        "std": per_class_values.std(axis=0, ddof=ddof),
+    }
+    aggregate["confusion_matrix_sum"] = np.stack(
+        [metrics["confusion_matrix"] for metrics in run_metrics]
+    ).sum(axis=0)
+    return aggregate
+
+
 def _json_compatible(value):
     if isinstance(value, Path):
         return str(value)

@@ -1,3 +1,5 @@
+import secrets
+
 import torch
 import torch.nn as nn
 
@@ -6,6 +8,7 @@ from utils import (
     InputNormalization,
     LRSchedulingType,
     ModelArchitecture,
+    TrainingSeedMode,
     TransformerPositionEncoding,
 )
 
@@ -88,6 +91,24 @@ def configure_reproducibility(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def build_training_seeds(mode, fixed_seed, num_seeds):
+    """Return the fixed seed or randomly sample distinct training seeds."""
+    mode = TrainingSeedMode(mode)
+
+    if mode == TrainingSeedMode.ONE_TRAIN_SEED:
+        return [int(fixed_seed)]
+    num_seeds = int(num_seeds)
+    if num_seeds < 1:
+        raise ValueError("NUM_SEEDS must be at least 1 in multi-seed mode")
+    seed_population_size = 2**31
+    if num_seeds > seed_population_size:
+        raise ValueError("NUM_SEEDS exceeds the available seed range")
+    return secrets.SystemRandom().sample(
+        range(seed_population_size),
+        k=num_seeds,
+    )
 
 
 def build_checkpoint_path(
