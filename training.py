@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from utils import (
+    ConformerCNNNormalization,
     LRSchedulingType,
     ModelArchitecture,
     TransformerPositionEncoding,
@@ -97,6 +98,7 @@ def build_checkpoint_path(
     transformer_dropout,
     transformer_ffn_residual_scale=0.5,
     transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
+    transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
     model_variant,
     run_name,
     patch_size,
@@ -114,6 +116,9 @@ def build_checkpoint_path(
     if architecture.uses_transformer:
         transformer_position_encoding = TransformerPositionEncoding(
             transformer_position_encoding
+        )
+        transformer_cnn_normalization = ConformerCNNNormalization(
+            transformer_cnn_normalization
         )
         dropout_name = str(transformer_dropout).replace(".", "p")
         architecture_name = (
@@ -133,6 +138,14 @@ def build_checkpoint_path(
         ):
             architecture_name = (
                 f"{architecture_name}_{transformer_position_encoding.value}"
+            )
+        if (
+            transformer_cnn_normalization
+            != ConformerCNNNormalization.BATCH_NORM
+        ):
+            architecture_name = (
+                f"{architecture_name}_cnn_"
+                f"{transformer_cnn_normalization.value}"
             )
     filename = (
         f"{architecture_name}_{run_name}_p{int(patch_size)}_e{epochs}_"

@@ -66,6 +66,11 @@ class TransformerPositionEncoding(StrEnum):
     CONFORMER_1D = "conformer_1d"
 
 
+class ConformerCNNNormalization(StrEnum):
+    BATCH_NORM = "batch_norm"
+    LAYER_NORM = "layer_norm"
+
+
 class ModelArchitecture(StrEnum):
     CNN_ONLY = "cnn_only"
     CNN_CSA = "cnn_csa"

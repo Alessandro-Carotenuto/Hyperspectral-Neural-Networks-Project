@@ -3,7 +3,11 @@ import math
 import torch
 import torch.nn as nn
 
-from utils import ModelArchitecture, TransformerPositionEncoding
+from utils import (
+    ConformerCNNNormalization,
+    ModelArchitecture,
+    TransformerPositionEncoding,
+)
 
 
 class MultiscaleCNNBlock(nn.Module):
@@ -288,15 +292,36 @@ class RelativeMultiHeadSelfAttention(nn.Module):
         return residual + attended_tokens
 
 
+class ChannelLayerNorm2d(nn.Module):
+    """Apply LayerNorm across channels at every spatial position."""
+
+    def __init__(self, channels):
+        super().__init__()
+        self.normalization = nn.LayerNorm(channels)
+
+    def forward(self, features):
+        features = features.permute(0, 2, 3, 1)
+        features = self.normalization(features)
+        return features.permute(0, 3, 1, 2)
+
+
 class ConformerCNNModule(nn.Module):
     """Two-dimensional local feature module inside the Transformer branch."""
 
-    def __init__(self, channels, height, width, dropout):
+    def __init__(
+        self,
+        channels,
+        height,
+        width,
+        dropout,
+        normalization=ConformerCNNNormalization.BATCH_NORM,
+    ):
         super().__init__()
 
         self.channels = channels
         self.height = int(height)
         self.width = int(width)
+        self.normalization_type = ConformerCNNNormalization(normalization)
         self.normalization = nn.LayerNorm(channels)
         self.input_projection = nn.Conv2d(
             channels, 2 * channels, kernel_size=1
@@ -309,7 +334,10 @@ class ConformerCNNModule(nn.Module):
             padding=1,
             groups=channels,
         )
-        self.batch_normalization = nn.BatchNorm2d(channels)
+        if self.normalization_type == ConformerCNNNormalization.BATCH_NORM:
+            self.batch_normalization = nn.BatchNorm2d(channels)
+        else:
+            self.batch_normalization = ChannelLayerNorm2d(channels)
         self.activation = nn.SiLU()
         self.output_projection = nn.Conv2d(
             channels, channels, kernel_size=1
@@ -355,6 +383,7 @@ class TransformerBranch(nn.Module):
         dropout=0.1,
         ffn_residual_scale=0.5,
         position_encoding=TransformerPositionEncoding.LEARNED_2D,
+        cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
     ):
         super().__init__()
 
@@ -376,7 +405,11 @@ class TransformerBranch(nn.Module):
             position_encoding=position_encoding,
         )
         self.cnn_module = ConformerCNNModule(
-            channels, self.height, self.width, dropout
+            channels,
+            self.height,
+            self.width,
+            dropout,
+            normalization=cnn_normalization,
         )
         self.feed_forward_2 = FeedForwardModule(
             channels,
@@ -419,6 +452,7 @@ class CTBlock(nn.Module):
         transformer_dropout=0.1,
         transformer_ffn_residual_scale=0.5,
         transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
+        transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
     ):
         super().__init__()
 
@@ -431,6 +465,7 @@ class CTBlock(nn.Module):
             dropout=transformer_dropout,
             ffn_residual_scale=transformer_ffn_residual_scale,
             position_encoding=transformer_position_encoding,
+            cnn_normalization=transformer_cnn_normalization,
         )
         self.fusion = nn.Conv2d(
             2 * channels, channels, kernel_size=1
@@ -586,6 +621,7 @@ class CNNTransformerClassifier(nn.Module):
         transformer_dropout=0.1,
         transformer_ffn_residual_scale=0.5,
         transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
+        transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
     ):
         super().__init__()
 
@@ -600,6 +636,7 @@ class CNNTransformerClassifier(nn.Module):
             transformer_dropout=transformer_dropout,
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
             transformer_position_encoding=transformer_position_encoding,
+            transformer_cnn_normalization=transformer_cnn_normalization,
         )
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Linear(feature_channels, num_classes)
@@ -627,6 +664,7 @@ class CNNTransformerCSAClassifier(nn.Module):
         transformer_dropout=0.1,
         transformer_ffn_residual_scale=0.5,
         transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
+        transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
     ):
         super().__init__()
 
@@ -641,6 +679,7 @@ class CNNTransformerCSAClassifier(nn.Module):
             transformer_dropout=transformer_dropout,
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
             transformer_position_encoding=transformer_position_encoding,
+            transformer_cnn_normalization=transformer_cnn_normalization,
         )
         self.csa_block = ChannelSpatialAttentionBlock()
         self.global_pool = nn.AdaptiveAvgPool2d(1)
@@ -667,6 +706,7 @@ def build_model(
     transformer_dropout=0.1,
     transformer_ffn_residual_scale=0.5,
     transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
+    transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
 ):
     """Build the model selected by the experiment configuration."""
     if architecture == ModelArchitecture.CNN_ONLY:
@@ -692,6 +732,7 @@ def build_model(
             transformer_dropout=transformer_dropout,
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
             transformer_position_encoding=transformer_position_encoding,
+            transformer_cnn_normalization=transformer_cnn_normalization,
         )
     if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA:
         return CNNTransformerCSAClassifier(
@@ -704,5 +745,6 @@ def build_model(
             transformer_dropout=transformer_dropout,
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
             transformer_position_encoding=transformer_position_encoding,
+            transformer_cnn_normalization=transformer_cnn_normalization,
         )
     raise ValueError(f"Unsupported model architecture: {architecture}")
