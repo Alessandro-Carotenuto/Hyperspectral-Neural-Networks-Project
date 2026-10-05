@@ -61,6 +61,11 @@ class LRSchedulingType(StrEnum):
     REDUCELRONPLATEAU = "reduce_lr_on_plateau"
 
 
+class TransformerPositionEncoding(StrEnum):
+    LEARNED_2D = "learned_2d"
+    CONFORMER_1D = "conformer_1d"
+
+
 class ModelArchitecture(StrEnum):
     CNN_ONLY = "cnn_only"
     CNN_CSA = "cnn_csa"

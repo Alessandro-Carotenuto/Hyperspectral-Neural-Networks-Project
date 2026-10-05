@@ -1,7 +1,11 @@
 import torch
 import torch.nn as nn
 
-from utils import LRSchedulingType, ModelArchitecture
+from utils import (
+    LRSchedulingType,
+    ModelArchitecture,
+    TransformerPositionEncoding,
+)
 
 
 def build_lr_scheduler(optimizer, scheduling_type, total_epochs):
@@ -92,6 +96,7 @@ def build_checkpoint_path(
     transformer_expansion_factor,
     transformer_dropout,
     transformer_ffn_residual_scale=0.5,
+    transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
     model_variant,
     run_name,
     patch_size,
@@ -107,6 +112,9 @@ def build_checkpoint_path(
     if model_variant:
         architecture_name = f"{architecture_name}_{model_variant}"
     if architecture.uses_transformer:
+        transformer_position_encoding = TransformerPositionEncoding(
+            transformer_position_encoding
+        )
         dropout_name = str(transformer_dropout).replace(".", "p")
         architecture_name = (
             f"{architecture_name}_h{transformer_heads}_"
@@ -118,6 +126,13 @@ def build_checkpoint_path(
             ).replace(".", "p")
             architecture_name = (
                 f"{architecture_name}_s{residual_scale_name}"
+            )
+        if (
+            transformer_position_encoding
+            != TransformerPositionEncoding.LEARNED_2D
+        ):
+            architecture_name = (
+                f"{architecture_name}_{transformer_position_encoding.value}"
             )
     filename = (
         f"{architecture_name}_{run_name}_p{int(patch_size)}_e{epochs}_"

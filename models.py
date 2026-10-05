@@ -1,7 +1,9 @@
+import math
+
 import torch
 import torch.nn as nn
 
-from utils import ModelArchitecture
+from utils import ModelArchitecture, TransformerPositionEncoding
 
 
 class MultiscaleCNNBlock(nn.Module):
@@ -120,10 +122,98 @@ class RelativePositionBias2D(nn.Module):
         return bias.permute(2, 0, 1).unsqueeze(0)
 
 
-class RelativeMultiHeadSelfAttention(nn.Module):
-    """Pre-normalized MHSA with a two-dimensional relative bias."""
+class ConformerRelativePositionEncoding1D(nn.Module):
+    """Transformer-XL-style relative sinusoidal attention for a token sequence."""
 
-    def __init__(self, channels, num_heads, height, width, dropout):
+    def __init__(self, token_count, channels, num_heads):
+        super().__init__()
+
+        if channels % 2 != 0:
+            raise ValueError("Conformer positional channels must be even")
+
+        self.num_heads = num_heads
+        self.head_channels = channels // num_heads
+        self.scale = self.head_channels ** -0.5
+        self.position_projection = nn.Linear(
+            channels, channels, bias=False
+        )
+        self.content_bias = nn.Parameter(
+            torch.zeros(num_heads, self.head_channels)
+        )
+        self.position_bias = nn.Parameter(
+            torch.zeros(num_heads, self.head_channels)
+        )
+
+        relative_positions = torch.arange(
+            -(token_count - 1), token_count, dtype=torch.float32
+        )
+        inverse_frequencies = torch.exp(
+            torch.arange(0, channels, 2, dtype=torch.float32)
+            * (-math.log(10000.0) / channels)
+        )
+        sinusoidal_embeddings = torch.zeros(
+            2 * token_count - 1, channels
+        )
+        angles = relative_positions[:, None] * inverse_frequencies[None, :]
+        sinusoidal_embeddings[:, 0::2] = torch.sin(angles)
+        sinusoidal_embeddings[:, 1::2] = torch.cos(angles)
+
+        token_positions = torch.arange(token_count)
+        relative_position_index = (
+            token_positions[:, None]
+            - token_positions[None, :]
+            + token_count
+            - 1
+        )
+        self.register_buffer(
+            "sinusoidal_embeddings",
+            sinusoidal_embeddings,
+            persistent=False,
+        )
+        self.register_buffer(
+            "relative_position_index",
+            relative_position_index,
+            persistent=False,
+        )
+
+    def forward(self, queries, keys):
+        projected_positions = self.position_projection(
+            self.sinusoidal_embeddings
+        )
+        projected_positions = projected_positions.reshape(
+            projected_positions.shape[0],
+            self.num_heads,
+            self.head_channels,
+        )
+        pairwise_positions = projected_positions[
+            self.relative_position_index
+        ]
+
+        content_scores = torch.einsum(
+            "bhid,bhjd->bhij",
+            queries + self.content_bias[None, :, None, :],
+            keys,
+        )
+        position_scores = torch.einsum(
+            "bhid,ijhd->bhij",
+            queries + self.position_bias[None, :, None, :],
+            pairwise_positions,
+        )
+        return (content_scores + position_scores) * self.scale
+
+
+class RelativeMultiHeadSelfAttention(nn.Module):
+    """Pre-normalized MHSA with configurable relative position encoding."""
+
+    def __init__(
+        self,
+        channels,
+        num_heads,
+        height,
+        width,
+        dropout,
+        position_encoding=TransformerPositionEncoding.LEARNED_2D,
+    ):
         super().__init__()
 
         if channels % num_heads != 0:
@@ -134,11 +224,28 @@ class RelativeMultiHeadSelfAttention(nn.Module):
         self.num_heads = num_heads
         self.head_channels = channels // num_heads
         self.scale = self.head_channels ** -0.5
+        self.position_encoding = TransformerPositionEncoding(
+            position_encoding
+        )
         self.normalization = nn.LayerNorm(channels)
         self.qkv_projection = nn.Linear(channels, 3 * channels)
-        self.relative_position_bias = RelativePositionBias2D(
-            height, width, num_heads
-        )
+        if self.position_encoding == TransformerPositionEncoding.LEARNED_2D:
+            self.relative_position_bias = RelativePositionBias2D(
+                height, width, num_heads
+            )
+            self.conformer_relative_position = None
+        elif self.position_encoding == TransformerPositionEncoding.CONFORMER_1D:
+            self.relative_position_bias = None
+            self.conformer_relative_position = (
+                ConformerRelativePositionEncoding1D(
+                    height * width, channels, num_heads
+                )
+            )
+        else:
+            raise ValueError(
+                "Unsupported Transformer position encoding: "
+                f"{self.position_encoding}"
+            )
         self.attention_dropout = nn.Dropout(dropout)
         self.output_projection = nn.Linear(channels, channels)
         self.output_dropout = nn.Dropout(dropout)
@@ -159,11 +266,16 @@ class RelativeMultiHeadSelfAttention(nn.Module):
         qkv = qkv.permute(2, 0, 3, 1, 4)
         queries, keys, values = qkv.unbind(dim=0)
 
-        attention_scores = queries @ keys.transpose(-2, -1)
-        attention_scores = attention_scores * self.scale
-        attention_scores = (
-            attention_scores + self.relative_position_bias()
-        )
+        if self.position_encoding == TransformerPositionEncoding.LEARNED_2D:
+            attention_scores = queries @ keys.transpose(-2, -1)
+            attention_scores = attention_scores * self.scale
+            attention_scores = (
+                attention_scores + self.relative_position_bias()
+            )
+        else:
+            attention_scores = self.conformer_relative_position(
+                queries, keys
+            )
         attention_weights = attention_scores.softmax(dim=-1)
         attention_weights = self.attention_dropout(attention_weights)
 
@@ -242,6 +354,7 @@ class TransformerBranch(nn.Module):
         expansion_factor=4,
         dropout=0.1,
         ffn_residual_scale=0.5,
+        position_encoding=TransformerPositionEncoding.LEARNED_2D,
     ):
         super().__init__()
 
@@ -260,6 +373,7 @@ class TransformerBranch(nn.Module):
             self.height,
             self.width,
             dropout,
+            position_encoding=position_encoding,
         )
         self.cnn_module = ConformerCNNModule(
             channels, self.height, self.width, dropout
@@ -304,6 +418,7 @@ class CTBlock(nn.Module):
         transformer_expansion_factor=4,
         transformer_dropout=0.1,
         transformer_ffn_residual_scale=0.5,
+        transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
     ):
         super().__init__()
 
@@ -315,6 +430,7 @@ class CTBlock(nn.Module):
             expansion_factor=transformer_expansion_factor,
             dropout=transformer_dropout,
             ffn_residual_scale=transformer_ffn_residual_scale,
+            position_encoding=transformer_position_encoding,
         )
         self.fusion = nn.Conv2d(
             2 * channels, channels, kernel_size=1
@@ -469,6 +585,7 @@ class CNNTransformerClassifier(nn.Module):
         transformer_expansion_factor=4,
         transformer_dropout=0.1,
         transformer_ffn_residual_scale=0.5,
+        transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
     ):
         super().__init__()
 
@@ -482,6 +599,7 @@ class CNNTransformerClassifier(nn.Module):
             transformer_expansion_factor=transformer_expansion_factor,
             transformer_dropout=transformer_dropout,
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
+            transformer_position_encoding=transformer_position_encoding,
         )
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Linear(feature_channels, num_classes)
@@ -508,6 +626,7 @@ class CNNTransformerCSAClassifier(nn.Module):
         transformer_expansion_factor=4,
         transformer_dropout=0.1,
         transformer_ffn_residual_scale=0.5,
+        transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
     ):
         super().__init__()
 
@@ -521,6 +640,7 @@ class CNNTransformerCSAClassifier(nn.Module):
             transformer_expansion_factor=transformer_expansion_factor,
             transformer_dropout=transformer_dropout,
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
+            transformer_position_encoding=transformer_position_encoding,
         )
         self.csa_block = ChannelSpatialAttentionBlock()
         self.global_pool = nn.AdaptiveAvgPool2d(1)
@@ -546,6 +666,7 @@ def build_model(
     transformer_expansion_factor=4,
     transformer_dropout=0.1,
     transformer_ffn_residual_scale=0.5,
+    transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
 ):
     """Build the model selected by the experiment configuration."""
     if architecture == ModelArchitecture.CNN_ONLY:
@@ -570,6 +691,7 @@ def build_model(
             transformer_expansion_factor=transformer_expansion_factor,
             transformer_dropout=transformer_dropout,
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
+            transformer_position_encoding=transformer_position_encoding,
         )
     if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA:
         return CNNTransformerCSAClassifier(
@@ -581,5 +703,6 @@ def build_model(
             transformer_expansion_factor=transformer_expansion_factor,
             transformer_dropout=transformer_dropout,
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
+            transformer_position_encoding=transformer_position_encoding,
         )
     raise ValueError(f"Unsupported model architecture: {architecture}")
