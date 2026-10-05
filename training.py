@@ -100,7 +100,7 @@ def build_checkpoint_path(
 ):
     """Build a checkpoint path containing the experiment identity."""
     architecture_name = architecture.value
-    if architecture == ModelArchitecture.CNN_TRANSFORMER:
+    if architecture.uses_transformer:
         architecture_name = (
             f"{architecture_name}_h{transformer_heads}"
         )

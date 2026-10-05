@@ -314,6 +314,87 @@ class CTBlock(nn.Module):
         return features + fused_features
 
 
+class ChannelAttention(nn.Module):
+    """Lightweight channel attention with a residual connection."""
+
+    def __init__(self, kernel_size=3):
+        super().__init__()
+
+        if kernel_size % 2 == 0:
+            raise ValueError("Channel attention kernel size must be odd")
+
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.channel_convolution = nn.Conv1d(
+            1,
+            1,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            bias=False,
+        )
+
+    def forward(self, features):
+        pooled_features = self.global_pool(features)
+        channel_descriptor = pooled_features.squeeze(-1).transpose(1, 2)
+        channel_weights = self.channel_convolution(channel_descriptor)
+        channel_weights = torch.sigmoid(channel_weights)
+        channel_weights = channel_weights.transpose(1, 2).unsqueeze(-1)
+        return features + features * channel_weights
+
+
+class SpatialAttention(nn.Module):
+    """Spatial attention reconstructed from Section 2.4 of the paper."""
+
+    def __init__(self):
+        super().__init__()
+
+        self.extrema_branch = nn.Sequential(
+            nn.Conv2d(2, 1, kernel_size=5, padding=2),
+            nn.PReLU(num_parameters=1),
+        )
+        self.distribution_branch = nn.Sequential(
+            nn.Conv2d(2, 1, kernel_size=5, padding=2),
+            nn.PReLU(num_parameters=1),
+        )
+        self.fusion = nn.Conv2d(2, 1, kernel_size=1)
+
+    def forward(self, features):
+        maximum = features.amax(dim=1, keepdim=True)
+        minimum = features.amin(dim=1, keepdim=True)
+        mean = features.mean(dim=1, keepdim=True)
+        standard_deviation = features.std(
+            dim=1, keepdim=True, correction=0
+        )
+
+        extrema_features = self.extrema_branch(
+            torch.cat([maximum, minimum], dim=1)
+        )
+        distribution_features = self.distribution_branch(
+            torch.cat([mean, standard_deviation], dim=1)
+        )
+        spatial_weights = torch.sigmoid(
+            self.fusion(
+                torch.cat(
+                    [extrema_features, distribution_features], dim=1
+                )
+            )
+        )
+        return features + features * spatial_weights
+
+
+class ChannelSpatialAttentionBlock(nn.Module):
+    """Sequential channel-spatial attention that preserves BCHW shape."""
+
+    def __init__(self, channel_kernel_size=3):
+        super().__init__()
+
+        self.channel_attention = ChannelAttention(channel_kernel_size)
+        self.spatial_attention = SpatialAttention()
+
+    def forward(self, features):
+        channel_refined_features = self.channel_attention(features)
+        return self.spatial_attention(channel_refined_features)
+
+
 class CNNOnlyBaseline(nn.Module):
     """CNN-only baseline derived from the CNN branch of the CT block."""
 
@@ -331,6 +412,29 @@ class CNNOnlyBaseline(nn.Module):
         features = self.input_projection(patches)
         cnn_features = self.cnn_block(features)
         pooled_features = self.global_pool(cnn_features)
+        pooled_features = pooled_features.flatten(start_dim=1)
+        return self.classifier(pooled_features)
+
+
+class CNNCSAClassifier(nn.Module):
+    """CNN classifier followed by channel-spatial attention."""
+
+    def __init__(self, input_channels, feature_channels, num_classes):
+        super().__init__()
+
+        self.input_projection = nn.Conv2d(
+            input_channels, feature_channels, kernel_size=1
+        )
+        self.cnn_block = MultiscaleCNNBlock(feature_channels)
+        self.csa_block = ChannelSpatialAttentionBlock()
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Linear(feature_channels, num_classes)
+
+    def forward(self, patches):
+        features = self.input_projection(patches)
+        cnn_features = self.cnn_block(features)
+        refined_features = self.csa_block(cnn_features)
+        pooled_features = self.global_pool(refined_features)
         pooled_features = pooled_features.flatten(start_dim=1)
         return self.classifier(pooled_features)
 
@@ -372,6 +476,45 @@ class CNNTransformerClassifier(nn.Module):
         return self.classifier(pooled_features)
 
 
+class CNNTransformerCSAClassifier(nn.Module):
+    """CNN-Transformer classifier followed by channel-spatial attention."""
+
+    def __init__(
+        self,
+        input_channels,
+        feature_channels,
+        num_classes,
+        patch_size,
+        *,
+        transformer_heads,
+        transformer_expansion_factor=4,
+        transformer_dropout=0.1,
+    ):
+        super().__init__()
+
+        self.input_projection = nn.Conv2d(
+            input_channels, feature_channels, kernel_size=1
+        )
+        self.ct_block = CTBlock(
+            feature_channels,
+            patch_size,
+            transformer_heads=transformer_heads,
+            transformer_expansion_factor=transformer_expansion_factor,
+            transformer_dropout=transformer_dropout,
+        )
+        self.csa_block = ChannelSpatialAttentionBlock()
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Linear(feature_channels, num_classes)
+
+    def forward(self, patches):
+        features = self.input_projection(patches)
+        ct_features = self.ct_block(features)
+        refined_features = self.csa_block(ct_features)
+        pooled_features = self.global_pool(refined_features)
+        pooled_features = pooled_features.flatten(start_dim=1)
+        return self.classifier(pooled_features)
+
+
 def build_model(
     architecture,
     *,
@@ -390,8 +533,24 @@ def build_model(
             feature_channels=feature_channels,
             num_classes=num_classes,
         )
+    if architecture == ModelArchitecture.CNN_CSA:
+        return CNNCSAClassifier(
+            input_channels=input_channels,
+            feature_channels=feature_channels,
+            num_classes=num_classes,
+        )
     if architecture == ModelArchitecture.CNN_TRANSFORMER:
         return CNNTransformerClassifier(
+            input_channels=input_channels,
+            feature_channels=feature_channels,
+            num_classes=num_classes,
+            patch_size=patch_size,
+            transformer_heads=transformer_heads,
+            transformer_expansion_factor=transformer_expansion_factor,
+            transformer_dropout=transformer_dropout,
+        )
+    if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA:
+        return CNNTransformerCSAClassifier(
             input_channels=input_channels,
             feature_channels=feature_channels,
             num_classes=num_classes,

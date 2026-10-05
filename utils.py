@@ -63,11 +63,29 @@ class LRSchedulingType(StrEnum):
 
 class ModelArchitecture(StrEnum):
     CNN_ONLY = "cnn_only"
+    CNN_CSA = "cnn_csa"
     CNN_TRANSFORMER = "cnn_transformer"
+    CNN_TRANSFORMER_CSA = "cnn_transformer_csa"
 
     @property
     def display_name(self):
         return {
             self.CNN_ONLY: "CNN-Only",
+            self.CNN_CSA: "CNN-CSA",
             self.CNN_TRANSFORMER: "CNN-Transformer",
+            self.CNN_TRANSFORMER_CSA: "CNN-Transformer-CSA",
         }[self]
+
+    @property
+    def uses_transformer(self):
+        return self in {
+            self.CNN_TRANSFORMER,
+            self.CNN_TRANSFORMER_CSA,
+        }
+
+    @property
+    def uses_csa(self):
+        return self in {
+            self.CNN_CSA,
+            self.CNN_TRANSFORMER_CSA,
+        }

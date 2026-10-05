@@ -293,6 +293,35 @@ Primo progetto completo e presentabile, anche se non soddisfa ancora il TLDR CNN
 
 ## Livello 3: CT block
 
+### Stato: completato
+
+Completato nel notebook e nei moduli Python:
+
+- ramo Transformer in stile Conformer con due Feed Forward Module,
+  Multi-Head Self-Attention, CNN module interno e residual connection;
+- tokenizzazione spaziale delle feature `15 x 15` in `225` token da
+  `128` feature;
+- self-attention con `4` head e positional bias relativa 2D;
+- input e output del ramo Transformer con shape `(B, 128, 15, 15)`;
+- CT block con CNN e Transformer paralleli, concatenazione, convoluzione
+  `1x1` e residual connection esterna;
+- enum dell'architettura e factory per selezionare CNN-only oppure CT;
+- checkpoint, report e titoli dei grafici distinti per architettura;
+- forward/backward sanity check, smoke training, evaluation e
+  classification map completi;
+- run principale CT da `150` epoche sullo split `RANDOM`, split seed
+  `42` e training seed `100`;
+- best checkpoint all'epoca `133`, con validation loss `0,2517`;
+- risultati test CT: OA `84,39%`, AA `90,46%` e Kappa `80,16%`;
+- confronto sullo stesso protocollo con la CNN-only: il CT riduce l'OA
+  di circa `1,91` punti ma aumenta l'AA di circa `1,36` punti nel singolo
+  seed analizzato.
+
+Il primo MVP individuale CNN-Transformer è quindi completo. Il confronto
+su un solo seed mostra un miglior bilanciamento medio tra classi, ma non
+un miglioramento dell'Overall Accuracy. La verifica statistica su più seed
+resta parte del Livello 6.
+
 ### Obiettivo
 
 Soddisfare il nucleo del progetto: CNN locale e Transformer non locale.
@@ -338,6 +367,14 @@ Se il tempo è limitato, fermarsi qui. Consolidare codice, notebook, risultati e
 
 ## Livello 4: channel-spatial attention
 
+### Stato: implementazione completata, validazione sperimentale in corso
+
+Sono disponibili il blocco `ChannelSpatialAttentionBlock` e le quattro
+architetture selezionabili `CNN_ONLY`, `CNN_CSA`, `CNN_TRANSFORMER` e
+`CNN_TRANSFORMER_CSA`. I controlli sintetici di shape, forward e backward
+sono superati. Restano da eseguire smoke training e confronto sperimentale
+prima di considerare completato il livello.
+
 ### Obiettivo
 
 Replicare Att block del paper dopo CT block.
@@ -364,8 +401,9 @@ Replicare Att block del paper dopo CT block.
 Confrontare:
 
 1. CNN-only;
-2. CT;
-3. CT + CSA.
+2. CNN + CSA;
+3. CT;
+4. CT + CSA.
 
 ### Artefatto disponibile
 
