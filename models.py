@@ -45,7 +45,7 @@ class MultiscaleCNNBlock(nn.Module):
         ]
         concatenated_features = torch.cat(branch_features, dim=1)
         fused_features = self.fusion(concatenated_features)
-        return features + fused_features
+        return fused_features
 
 
 class FeedForwardModule(nn.Module):
@@ -410,7 +410,7 @@ class CNNOnlyBaseline(nn.Module):
 
     def forward(self, patches):
         features = self.input_projection(patches)
-        cnn_features = self.cnn_block(features)
+        cnn_features = features + self.cnn_block(features)
         pooled_features = self.global_pool(cnn_features)
         pooled_features = pooled_features.flatten(start_dim=1)
         return self.classifier(pooled_features)
@@ -432,7 +432,7 @@ class CNNCSAClassifier(nn.Module):
 
     def forward(self, patches):
         features = self.input_projection(patches)
-        cnn_features = self.cnn_block(features)
+        cnn_features = features + self.cnn_block(features)
         refined_features = self.csa_block(cnn_features)
         pooled_features = self.global_pool(refined_features)
         pooled_features = pooled_features.flatten(start_dim=1)

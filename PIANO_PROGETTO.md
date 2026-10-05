@@ -372,8 +372,13 @@ Se il tempo è limitato, fermarsi qui. Consolidare codice, notebook, risultati e
 Sono disponibili il blocco `ChannelSpatialAttentionBlock` e le quattro
 architetture selezionabili `CNN_ONLY`, `CNN_CSA`, `CNN_TRANSFORMER` e
 `CNN_TRANSFORMER_CSA`. I controlli sintetici di shape, forward e backward
-sono superati. Restano da eseguire smoke training e confronto sperimentale
-prima di considerare completato il livello.
+e gli smoke training delle due nuove architetture sono superati. La prima
+run completa CT + CSA con quattro head ha ottenuto OA `86,71%`, AA `89,93%`
+e Kappa `82,79%` sul seed `42`. La variante strutturale successiva rimuove
+il residual interno dal ramo CNN del CT e conserva soltanto il residual
+esterno mostrato dal paper; deve ancora essere validata sperimentalmente.
+Resta inoltre da completare il confronto con CNN + CSA prima di considerare
+completato il livello.
 
 ### Obiettivo
 

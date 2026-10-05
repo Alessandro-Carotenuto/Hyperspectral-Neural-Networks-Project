@@ -89,6 +89,9 @@ def build_checkpoint_path(
     *,
     architecture,
     transformer_heads,
+    transformer_expansion_factor,
+    transformer_dropout,
+    model_variant,
     run_name,
     patch_size,
     epochs,
@@ -100,9 +103,13 @@ def build_checkpoint_path(
 ):
     """Build a checkpoint path containing the experiment identity."""
     architecture_name = architecture.value
+    if model_variant:
+        architecture_name = f"{architecture_name}_{model_variant}"
     if architecture.uses_transformer:
+        dropout_name = str(transformer_dropout).replace(".", "p")
         architecture_name = (
-            f"{architecture_name}_h{transformer_heads}"
+            f"{architecture_name}_h{transformer_heads}_"
+            f"x{transformer_expansion_factor}_d{dropout_name}"
         )
     filename = (
         f"{architecture_name}_{run_name}_p{int(patch_size)}_e{epochs}_"
