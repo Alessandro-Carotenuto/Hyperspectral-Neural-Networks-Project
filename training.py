@@ -91,6 +91,7 @@ def build_checkpoint_path(
     transformer_heads,
     transformer_expansion_factor,
     transformer_dropout,
+    transformer_ffn_residual_scale=0.5,
     model_variant,
     run_name,
     patch_size,
@@ -111,6 +112,13 @@ def build_checkpoint_path(
             f"{architecture_name}_h{transformer_heads}_"
             f"x{transformer_expansion_factor}_d{dropout_name}"
         )
+        if transformer_ffn_residual_scale != 0.5:
+            residual_scale_name = str(
+                transformer_ffn_residual_scale
+            ).replace(".", "p")
+            architecture_name = (
+                f"{architecture_name}_s{residual_scale_name}"
+            )
     filename = (
         f"{architecture_name}_{run_name}_p{int(patch_size)}_e{epochs}_"
         f"f{feature_channels}_lr{scheduling_type.value}_"

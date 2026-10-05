@@ -51,10 +51,17 @@ class MultiscaleCNNBlock(nn.Module):
 class FeedForwardModule(nn.Module):
     """Macaron-style feed-forward module used by the Conformer block."""
 
-    def __init__(self, channels, expansion_factor, dropout):
+    def __init__(
+        self,
+        channels,
+        expansion_factor,
+        dropout,
+        residual_scale=0.5,
+    ):
         super().__init__()
 
         hidden_channels = channels * expansion_factor
+        self.residual_scale = float(residual_scale)
         self.layers = nn.Sequential(
             nn.LayerNorm(channels),
             nn.Linear(channels, hidden_channels),
@@ -65,7 +72,7 @@ class FeedForwardModule(nn.Module):
         )
 
     def forward(self, tokens):
-        return tokens + 0.5 * self.layers(tokens)
+        return tokens + self.residual_scale * self.layers(tokens)
 
 
 class RelativePositionBias2D(nn.Module):
@@ -234,6 +241,7 @@ class TransformerBranch(nn.Module):
         num_heads,
         expansion_factor=4,
         dropout=0.1,
+        ffn_residual_scale=0.5,
     ):
         super().__init__()
 
@@ -241,7 +249,10 @@ class TransformerBranch(nn.Module):
         self.height = int(spatial_size)
         self.width = int(spatial_size)
         self.feed_forward_1 = FeedForwardModule(
-            channels, expansion_factor, dropout
+            channels,
+            expansion_factor,
+            dropout,
+            residual_scale=ffn_residual_scale,
         )
         self.self_attention = RelativeMultiHeadSelfAttention(
             channels,
@@ -254,7 +265,10 @@ class TransformerBranch(nn.Module):
             channels, self.height, self.width, dropout
         )
         self.feed_forward_2 = FeedForwardModule(
-            channels, expansion_factor, dropout
+            channels,
+            expansion_factor,
+            dropout,
+            residual_scale=ffn_residual_scale,
         )
         self.final_normalization = nn.LayerNorm(channels)
 
@@ -289,6 +303,7 @@ class CTBlock(nn.Module):
         transformer_heads,
         transformer_expansion_factor=4,
         transformer_dropout=0.1,
+        transformer_ffn_residual_scale=0.5,
     ):
         super().__init__()
 
@@ -299,6 +314,7 @@ class CTBlock(nn.Module):
             num_heads=transformer_heads,
             expansion_factor=transformer_expansion_factor,
             dropout=transformer_dropout,
+            ffn_residual_scale=transformer_ffn_residual_scale,
         )
         self.fusion = nn.Conv2d(
             2 * channels, channels, kernel_size=1
@@ -452,6 +468,7 @@ class CNNTransformerClassifier(nn.Module):
         transformer_heads,
         transformer_expansion_factor=4,
         transformer_dropout=0.1,
+        transformer_ffn_residual_scale=0.5,
     ):
         super().__init__()
 
@@ -464,6 +481,7 @@ class CNNTransformerClassifier(nn.Module):
             transformer_heads=transformer_heads,
             transformer_expansion_factor=transformer_expansion_factor,
             transformer_dropout=transformer_dropout,
+            transformer_ffn_residual_scale=transformer_ffn_residual_scale,
         )
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Linear(feature_channels, num_classes)
@@ -489,6 +507,7 @@ class CNNTransformerCSAClassifier(nn.Module):
         transformer_heads,
         transformer_expansion_factor=4,
         transformer_dropout=0.1,
+        transformer_ffn_residual_scale=0.5,
     ):
         super().__init__()
 
@@ -501,6 +520,7 @@ class CNNTransformerCSAClassifier(nn.Module):
             transformer_heads=transformer_heads,
             transformer_expansion_factor=transformer_expansion_factor,
             transformer_dropout=transformer_dropout,
+            transformer_ffn_residual_scale=transformer_ffn_residual_scale,
         )
         self.csa_block = ChannelSpatialAttentionBlock()
         self.global_pool = nn.AdaptiveAvgPool2d(1)
@@ -525,6 +545,7 @@ def build_model(
     transformer_heads,
     transformer_expansion_factor=4,
     transformer_dropout=0.1,
+    transformer_ffn_residual_scale=0.5,
 ):
     """Build the model selected by the experiment configuration."""
     if architecture == ModelArchitecture.CNN_ONLY:
@@ -548,6 +569,7 @@ def build_model(
             transformer_heads=transformer_heads,
             transformer_expansion_factor=transformer_expansion_factor,
             transformer_dropout=transformer_dropout,
+            transformer_ffn_residual_scale=transformer_ffn_residual_scale,
         )
     if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA:
         return CNNTransformerCSAClassifier(
@@ -558,5 +580,6 @@ def build_model(
             transformer_heads=transformer_heads,
             transformer_expansion_factor=transformer_expansion_factor,
             transformer_dropout=transformer_dropout,
+            transformer_ffn_residual_scale=transformer_ffn_residual_scale,
         )
     raise ValueError(f"Unsupported model architecture: {architecture}")
