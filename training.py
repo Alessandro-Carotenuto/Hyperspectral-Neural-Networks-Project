@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from utils import (
     ConformerCNNNormalization,
+    InputNormalization,
     LRSchedulingType,
     ModelArchitecture,
     TransformerPositionEncoding,
@@ -99,6 +100,7 @@ def build_checkpoint_path(
     transformer_ffn_residual_scale=0.5,
     transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
     transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
+    input_normalization=InputNormalization.MIN_MAX,
     model_variant,
     run_name,
     patch_size,
@@ -111,6 +113,7 @@ def build_checkpoint_path(
 ):
     """Build a checkpoint path containing the experiment identity."""
     architecture_name = architecture.value
+    input_normalization = InputNormalization(input_normalization)
     if model_variant:
         architecture_name = f"{architecture_name}_{model_variant}"
     if architecture.uses_transformer:
@@ -147,6 +150,10 @@ def build_checkpoint_path(
                 f"{architecture_name}_cnn_"
                 f"{transformer_cnn_normalization.value}"
             )
+    if input_normalization != InputNormalization.MIN_MAX:
+        architecture_name = (
+            f"{architecture_name}_{input_normalization.value}"
+        )
     filename = (
         f"{architecture_name}_{run_name}_p{int(patch_size)}_e{epochs}_"
         f"f{feature_channels}_lr{scheduling_type.value}_"

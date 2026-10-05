@@ -71,6 +71,11 @@ class ConformerCNNNormalization(StrEnum):
     LAYER_NORM = "layer_norm"
 
 
+class InputNormalization(StrEnum):
+    MIN_MAX = "min_max"
+    Z_SCORE = "z_score"
+
+
 class ModelArchitecture(StrEnum):
     CNN_ONLY = "cnn_only"
     CNN_CSA = "cnn_csa"

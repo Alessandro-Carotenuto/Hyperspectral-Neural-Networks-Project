@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from utils import DataSplitType, SplitName
+from utils import DataSplitType, InputNormalization, SplitName
 
 
 def build_forbidden_test_center_mask(image_shape, train_coordinates, radius):
@@ -55,6 +55,37 @@ def normalize_per_band_min_max(cube):
 
     normalized_cube = (cube_float - band_min) / band_range
     return normalized_cube, band_min, band_max
+
+
+def normalize_per_band_z_score(cube):
+    """Standardize every spectral band to zero mean and unit variance."""
+    cube_float = cube.astype(np.float32)
+    band_mean = cube_float.mean(axis=(0, 1), keepdims=True)
+    band_standard_deviation = cube_float.std(
+        axis=(0, 1), keepdims=True
+    )
+
+    constant_band_indices = np.flatnonzero(
+        band_standard_deviation.reshape(-1) == 0
+    )
+    if len(constant_band_indices) > 0:
+        raise ValueError(
+            "Constant spectral bands found: "
+            f"{constant_band_indices.tolist()}"
+        )
+
+    normalized_cube = (
+        cube_float - band_mean
+    ) / band_standard_deviation
+    return normalized_cube, band_mean, band_standard_deviation
+
+
+def normalize_per_band(cube, normalization):
+    """Apply the selected per-band normalization without changing raw data."""
+    normalization = InputNormalization(normalization)
+    if normalization == InputNormalization.MIN_MAX:
+        return normalize_per_band_min_max(cube)[0]
+    return normalize_per_band_z_score(cube)[0]
 
 
 def reflect_pad_spatially(cube, patch_radius):
