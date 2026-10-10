@@ -28,6 +28,47 @@ Quindi Peng non puo' risolvere le ambiguita' implementative di CTA. E' una fonte
 
 ## Implicazioni operative per la replica Pavia CT+CSA
 
+### Topologia dei residual: conclusione dopo il confronto testo-figure
+
+La lettura con il minor numero di assunzioni e' `outer_residual`:
+
+- la Fig. 1 disegna esplicitamente un bypass dall'output della convoluzione
+  iniziale all'uscita della fusione CNN-Transformer;
+- la Fig. 2(a) mostra il CNN block come quattro branch, concatenazione e
+  convoluzione `1x1`, senza disegnare un residual interno;
+- la Fig. 2(b) e la Fig. 3 mostrano invece esplicitamente i quattro residual
+  interni del Conformer: FFM, MHSA, CNN module e secondo FFM;
+- la Fig. 4 mostra esplicitamente un residual nella channel attention e uno
+  nella spatial attention.
+
+Il testo alla fine della Sezione 2.3 afferma anche che il CNN module riduce i
+canali e "perform[s] a residual connection with the input". Questa frase e'
+in conflitto con la Fig. 2(a) e ripete quasi alla lettera la descrizione del
+residual esterno del CT block presente nel paragrafo precedente. Non consente
+quindi di stabilire con certezza un secondo residual nel ramo CNN. La variante
+corrente, con solo il residual esterno del CT oltre ai residual interni del
+Conformer e della CSA, segue le frecce pubblicate ed e' la replica principale.
+
+### Varianti gia' escluse sperimentalmente
+
+Le prove locali hanno gia' verificato che il divario dal paper non viene
+chiuso modificando:
+
+- numero di head (`2`, `4`, `8`);
+- dropout, inclusa la sua rimozione;
+- scala residuale dei due FFM Macaron (`0.5` contro residuo pieno);
+- fattore di espansione FFM (`2` contro `4`).
+
+Questi parametri restano differenze non pubblicate dagli autori, ma non sono
+piu' ipotesi prioritarie per spiegare i circa nove punti OA mancanti.
+
+La differenza architetturale ancora piu' concreta e' la convoluzione `conv2`
+del CNN module interno al Conformer. CTA la descrive soltanto come una
+convoluzione 2D `3x3` e non dichiara `groups`; l'implementazione corrente usa
+una depthwise `3x3`, scelta derivata dallo Speech Conformer. Una convoluzione
+2D standard e' quindi la prossima ablation architetturale letterale, senza
+modificare la SA.
+
 Ordine consigliato delle prove, mantenendo identici split, seed e preprocessing:
 
 1. **Conservare BatchNorm nel CNN module.** CTA lascia `norm` ambiguo, ma Gulati usa BatchNorm e FusionNet usa LayerNorm nel percorso token/Transformer e BatchNorm nelle operazioni su feature map. Anche Peng usa BatchNorm nel ramo CNN. Il risultato sperimentale locale con LayerNorm peggiore e' quindi coerente con le fonti; non c'e' evidenza primaria per sostituire il BatchNorm 2D di default.

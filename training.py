@@ -94,18 +94,46 @@ def configure_reproducibility(seed):
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def build_training_seeds(mode, fixed_seed, num_seeds):
-    """Return the fixed seed or randomly sample distinct training seeds."""
+def build_training_seeds(
+    mode,
+    fixed_seed,
+    num_seeds,
+    fixed_seeds=None,
+):
+    """Build one run seed or a reproducible list of multi-run seeds."""
     mode = TrainingSeedMode(mode)
 
-    if mode == TrainingSeedMode.ONE_TRAIN_SEED:
+    if mode == TrainingSeedMode.ONE_FIXED_TRAIN_SEED:
         return [int(fixed_seed)]
     num_seeds = int(num_seeds)
     if num_seeds < 1:
         raise ValueError("NUM_SEEDS must be at least 1 in multi-seed mode")
+
+    if mode == TrainingSeedMode.MULTI_FIXED_TRAIN_SEED:
+        if fixed_seeds is None:
+            raise ValueError(
+                "TRAINING_SEEDS_FIXED is required in MULTI_FIXED_TRAIN_SEED mode"
+            )
+        seeds = [int(seed) for seed in fixed_seeds]
+        if len(seeds) != num_seeds:
+            raise ValueError(
+                "TRAINING_SEEDS_FIXED must contain exactly NUM_SEEDS values "
+                f"(expected {num_seeds}, got {len(seeds)})"
+            )
+        if len(set(seeds)) != len(seeds):
+            raise ValueError("TRAINING_SEEDS_FIXED must not contain duplicates")
+        seed_population_size = 2**31
+        if any(seed < 0 or seed >= seed_population_size for seed in seeds):
+            raise ValueError(
+                "Training seeds must be between 0 and 2**31 - 1"
+            )
+        return seeds
+
     seed_population_size = 2**31
     if num_seeds > seed_population_size:
         raise ValueError("NUM_SEEDS exceeds the available seed range")
+    if mode != TrainingSeedMode.MULTI_RANDOM_TRAIN_SEED:
+        raise ValueError(f"Unsupported training seed mode: {mode}")
     return secrets.SystemRandom().sample(
         range(seed_population_size),
         k=num_seeds,

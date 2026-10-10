@@ -367,18 +367,21 @@ Se il tempo è limitato, fermarsi qui. Consolidare codice, notebook, risultati e
 
 ## Livello 4: channel-spatial attention
 
-### Stato: implementazione completata, validazione sperimentale in corso
+### Stato: completato
 
 Sono disponibili il blocco `ChannelSpatialAttentionBlock` e le quattro
 architetture selezionabili `CNN_ONLY`, `CNN_CSA`, `CNN_TRANSFORMER` e
 `CNN_TRANSFORMER_CSA`. I controlli sintetici di shape, forward e backward
-e gli smoke training delle due nuove architetture sono superati. La prima
-run completa CT + CSA con quattro head ha ottenuto OA `86,71%`, AA `89,93%`
-e Kappa `82,79%` sul seed `42`. La variante strutturale successiva rimuove
-il residual interno dal ramo CNN del CT e conserva soltanto il residual
-esterno mostrato dal paper; deve ancora essere validata sperimentalmente.
-Resta inoltre da completare il confronto con CNN + CSA prima di considerare
-completato il livello.
+e gli smoke training delle due nuove architetture sono superati. La variante
+`outer_residual`, che rimuove il residual interno dal ramo CNN e conserva il
+residual esterno mostrato dal paper, e' stata validata con training completi.
+CT + CSA senza sample amplification, con weight decay nullo, ha ottenuto su
+dieci training seed OA `84,06 +/- 2,28%`, AA `88,88 +/- 1,03%` e Kappa
+`79,76 +/- 2,59%`, mantenendo fisso lo split seed `42`.
+
+Il confronto sistematico comprendente anche CNN + CSA resta utile, ma viene
+trattato come parte dell'ablation completa del Livello 6 e non blocca la
+replica metodologica CTA-Net del Livello 5.
 
 ### Obiettivo
 
@@ -415,6 +418,33 @@ Confrontare:
 Architettura CNN-Transformer-Attention quasi completa.
 
 ## Livello 5: sample amplification
+
+### Stato: completato
+
+La Sample Amplification e' implementata come espansione offline del solo
+training set, materializzata separatamente per ogni training seed. La
+configurazione `CTA_NET` produce quattro pool paralleli: campioni originali,
+rumore gaussiano fuori dalla regione centrale `3 x 3`, rotazione casuale in
+`[-180, 180]` e somma diretta intra-classe con un anchor casuale per classe.
+Con 10 campioni originali per classe risultano 39 campioni per classe e 351
+campioni totali. Validation e test restano invariati.
+
+I test verificano cardinalita', regione centrale protetta, coerenza spaziale
+della rotazione tra tutte le bande, riproducibilita' per seed e isolamento di
+validation e test. Checkpoint e report registrano modalita', seed e parametri
+della SA.
+
+Su dieci training seed, con split seed `42` e weight decay nullo, CTA-Net
+completa ha ottenuto:
+
+- OA `85,47 +/- 3,55%`;
+- AA `88,88 +/- 2,23%`;
+- Kappa `81,37 +/- 4,19%`.
+
+Rispetto a CT + CSA senza SA, l'incremento e' `+1,41` punti OA e `+1,61`
+punti Kappa. La magnitudo OA e' coerente con i `+1,23` punti attribuiti alla
+SA dall'ablation del paper. La SA viene quindi congelata in questa forma;
+eventuali confronti paired o ulteriori ablation appartengono al Livello 6.
 
 ### Obiettivo
 
