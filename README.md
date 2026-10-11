@@ -92,6 +92,10 @@ The Transformer branch follows a Conformer-style block with two feed-forward mod
 
 The attention block applies channel attention followed by spatial attention. Spatial descriptors include the maximum, minimum, mean, and standard deviation across channels. Each attention stage has a residual connection.
 
+### Adaptive spectral pruning
+
+The optional `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` architecture predicts soft per-band gates from the Transformer branch, applies them to each training patch, and learns them with the classification loss plus a sparsity penalty. The fixed sigmoid slope is configurable in the notebook. At each epoch, gates from training patches are aggregated with threshold `0.5`; validation selects checkpoints using the resulting compact model. The selected global band mask and a compact checkpoint are saved, with the first projection narrowed to the retained bands. This option has not yet been trained for reported accuracy or latency results.
+
 ### Sample amplification
 
 The `CTA_NET` mode materializes four training pools for every run: original patches, Gaussian-noise variants outside a protected central `3 x 3` region, randomly rotated patches, and same-class direct-sum patches. With 10 original patches per class, this implementation produces 39 patches per class, 351 total. The augmentation seed is tied to the run's training seed for reproducibility.
@@ -140,6 +144,8 @@ The notebook keeps the experiment configuration together near its beginning. Imp
 | `ARCHITECTURE` | `CNN_TRANSFORMER_CSA` | Select CNN, CT, CSA, or CT + CSA |
 | `SAMPLE_AMPLIFICATION_MODE` | `CTA_NET` | Disable SA or use the CTA-Net augmentation |
 | `INPUT_NORMALIZATION` | `MIN_MAX` | Per-band min-max or z-score normalization |
+| `PRUNING_GATE_SLOPE` | `20.0` | Fixed sigmoid slope for adaptive spectral gates |
+| `PRUNING_SPARSITY_WEIGHT` | `0.001` | Loss weight encouraging fewer retained bands |
 | `WEIGHT_DECAY` | `0.0` | Adam weight decay |
 
 The SA values that are not specified by the paper are documented in [the sample amplification note](docs/research/cta_sample_amplification.md). Transformer reconstruction choices are summarized in [the Conformer analysis](docs/research/hsi_conformer_architectures.md).

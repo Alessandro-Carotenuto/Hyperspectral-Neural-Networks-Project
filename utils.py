@@ -92,6 +92,9 @@ class ModelArchitecture(StrEnum):
     CNN_CSA = "cnn_csa"
     CNN_TRANSFORMER = "cnn_transformer"
     CNN_TRANSFORMER_CSA = "cnn_transformer_csa"
+    CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING = (
+        "cnn_transformer_csa_adaptive_pruning"
+    )
 
     @property
     def display_name(self):
@@ -100,6 +103,8 @@ class ModelArchitecture(StrEnum):
             self.CNN_CSA: "CNN-CSA",
             self.CNN_TRANSFORMER: "CNN-Transformer",
             self.CNN_TRANSFORMER_CSA: "CNN-Transformer-CSA",
+            self.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING:
+                "CNN-Transformer-CSA-Adaptive-Pruning",
         }[self]
 
     @property
@@ -107,6 +112,7 @@ class ModelArchitecture(StrEnum):
         return self in {
             self.CNN_TRANSFORMER,
             self.CNN_TRANSFORMER_CSA,
+            self.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING,
         }
 
     @property
@@ -114,4 +120,5 @@ class ModelArchitecture(StrEnum):
         return self in {
             self.CNN_CSA,
             self.CNN_TRANSFORMER_CSA,
+            self.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING,
         }

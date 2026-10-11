@@ -485,7 +485,26 @@ Iniziare solo dopo replica funzionante su Pavia.
 
 - dieci split casuali;
 - media e deviazione standard;
-- ablation completa SA, CT e CSA;
+- ablation dei componenti SA, CT e CSA secondo la Tabella 7 del paper:
+  `CT + CSA + SA`, `CT + SA`, `CT + CSA` e `CSA + SA` senza CT;
+- implementare la variante `CSA + SA` senza CT: l'attuale `CNN_CSA` non e'
+  equivalente perche' mantiene il blocco CNN multiscala mentre rimuove il
+  Transformer. La nuova variante deve saltare il modulo CT, mantenendo CSA e
+  sample amplification;
+- `CT + CSA` senza SA e `CT + CSA + SA` sono state eseguite su split seed
+  `42` con la stessa lista di dieci training seed. La pipeline completa ha
+  ottenuto OA `85,55 +/- 4,36%`, AA `89,00 +/- 2,17%` e Kappa
+  `81,48 +/- 5,23%`, contro rispettivamente `84,10 +/- 4,06%`,
+  `88,03 +/- 2,13%` e `79,68 +/- 4,77%` senza SA. Le differenze tra le
+  medie sono `+1,45` punti OA, `+0,97` AA e `+1,80` Kappa;
+- anche `CT + SA` e' stata eseguita con lo stesso split e gli stessi seed:
+  OA `87,57 +/- 2,55%`, AA `90,58 +/- 1,44%` e Kappa `83,95 +/- 3,09%`.
+  Rispetto a `CT + CSA + SA`, le medie sono superiori di `2,02` punti OA,
+  `1,58` AA e `2,47` Kappa; in questo split l'effetto osservato della CSA
+  con SA attiva e' quindi negativo, diversamente dal piccolo incremento OA
+  riportato dal paper;
+- resta da completare `CSA + SA` senza CT; richiede una nuova variante che
+  salti il CT module, perche' `CNN_CSA` mantiene il blocco CNN multiscala;
 - analisi con `5, 10, 15, 20, 25, 30, 40, 50, 100` campioni per classe;
 - analisi numero feature channel;
 - analisi patch size da `7 x 7` a `23 x 23`;

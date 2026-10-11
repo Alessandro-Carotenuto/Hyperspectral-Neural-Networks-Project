@@ -694,6 +694,194 @@ class CNNTransformerCSAClassifier(nn.Module):
         return self.classifier(pooled_features)
 
 
+class CNNTransformerCSAAdaptivePruningClassifier(
+    CNNTransformerCSAClassifier
+):
+    """CTA-Net with a Transformer-conditioned, trainable spectral gate.
+
+    A first pass predicts one soft gate per input band from the Transformer
+    branch. The gate is applied to the original patch, which is then classified
+    in a second pass. The soft sigmoid keeps ordinary gradients flowing during
+    training; a dataset-level binary mask can be exported after training.
+    """
+
+    def __init__(
+        self,
+        input_channels,
+        feature_channels,
+        num_classes,
+        patch_size,
+        *,
+        transformer_heads,
+        transformer_expansion_factor=4,
+        transformer_dropout=0.1,
+        transformer_ffn_residual_scale=0.5,
+        transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
+        transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
+        pruning_gate_slope=20.0,
+        pruning_sparsity_weight=0.001,
+    ):
+        super().__init__(
+            input_channels=input_channels,
+            feature_channels=feature_channels,
+            num_classes=num_classes,
+            patch_size=patch_size,
+            transformer_heads=transformer_heads,
+            transformer_expansion_factor=transformer_expansion_factor,
+            transformer_dropout=transformer_dropout,
+            transformer_ffn_residual_scale=transformer_ffn_residual_scale,
+            transformer_position_encoding=transformer_position_encoding,
+            transformer_cnn_normalization=transformer_cnn_normalization,
+        )
+        self.input_channels = int(input_channels)
+        self.feature_channels = int(feature_channels)
+        self.num_classes = int(num_classes)
+        self.patch_size = int(patch_size)
+        self.transformer_heads = int(transformer_heads)
+        self.transformer_expansion_factor = int(
+            transformer_expansion_factor
+        )
+        self.transformer_dropout = float(transformer_dropout)
+        self.transformer_ffn_residual_scale = float(
+            transformer_ffn_residual_scale
+        )
+        self.transformer_position_encoding = TransformerPositionEncoding(
+            transformer_position_encoding
+        )
+        self.transformer_cnn_normalization = ConformerCNNNormalization(
+            transformer_cnn_normalization
+        )
+        self.pruning_gate_slope = float(pruning_gate_slope)
+        self.pruning_sparsity_weight = float(pruning_sparsity_weight)
+        if self.pruning_gate_slope <= 0:
+            raise ValueError("Pruning gate slope must be positive")
+        if self.pruning_sparsity_weight < 0:
+            raise ValueError("Pruning sparsity weight cannot be negative")
+
+        self.band_gate_head = nn.Linear(feature_channels, input_channels)
+        nn.init.zeros_(self.band_gate_head.weight)
+        nn.init.constant_(self.band_gate_head.bias, 0.15)
+
+    def predict_band_gates(self, patches):
+        """Predict differentiable per-sample gates from Transformer features."""
+        features = self.input_projection(patches)
+        transformer_features = self.ct_block.transformer_branch(features)
+        pooled = transformer_features.mean(dim=(2, 3))
+        gate_logits = self.band_gate_head(pooled)
+        return torch.sigmoid(self.pruning_gate_slope * gate_logits)
+
+    def forward(self, patches):
+        gates = self.predict_band_gates(patches)
+        self._last_pruning_penalty = (
+            self.pruning_sparsity_weight
+            * gates.sum(dim=1).mean()
+        )
+        masked_patches = patches * gates[:, :, None, None]
+        return super().forward(masked_patches)
+
+    def pruning_regularization(self, patches):
+        """Return the configured sparsity penalty for the current batch."""
+        del patches
+        return getattr(self, "_last_pruning_penalty", 0.0)
+
+    @torch.no_grad()
+    def estimate_global_band_mask(self, loader, device, threshold=0.5):
+        """Aggregate gates over a supplied loader into one fixed band mask."""
+        self.eval()
+        gate_sum = torch.zeros(self.input_channels, device=device)
+        sample_count = 0
+        for patches, _ in loader:
+            patches = patches.to(device)
+            gates = self.predict_band_gates(patches)
+            gate_sum += gates.sum(dim=0)
+            sample_count += gates.shape[0]
+        if sample_count == 0:
+            raise ValueError("Cannot estimate a band mask from an empty loader")
+        mean_gates = gate_sum / sample_count
+        selected_indices = torch.nonzero(
+            mean_gates >= threshold, as_tuple=True
+        )[0]
+        if selected_indices.numel() == 0:
+            selected_indices = mean_gates.argmax().reshape(1)
+        return selected_indices.cpu(), mean_gates.cpu()
+
+
+class FrozenBandPrunedClassifier(nn.Module):
+    """Compact CTA-Net that selects a fixed set of original input bands."""
+
+    def __init__(self, classifier, selected_band_indices):
+        super().__init__()
+        self.classifier = classifier
+        self.register_buffer(
+            "selected_band_indices",
+            torch.as_tensor(selected_band_indices, dtype=torch.long),
+        )
+
+    def forward(self, patches):
+        selected_patches = patches.index_select(
+            1, self.selected_band_indices
+        )
+        return self.classifier(selected_patches)
+
+
+def build_compact_pruned_model(adaptive_model, selected_band_indices):
+    """Export a standard CTA-Net with its first projection narrowed to K bands."""
+    selected_band_indices = torch.as_tensor(
+        selected_band_indices,
+        dtype=torch.long,
+        device=adaptive_model.input_projection.weight.device,
+    ).flatten()
+    if selected_band_indices.numel() == 0:
+        raise ValueError("At least one spectral band must be retained")
+    if (
+        selected_band_indices.min() < 0
+        or selected_band_indices.max() >= adaptive_model.input_channels
+    ):
+        raise ValueError("Selected band index is outside the input spectrum")
+
+    compact = CNNTransformerCSAClassifier(
+        input_channels=selected_band_indices.numel(),
+        feature_channels=adaptive_model.feature_channels,
+        num_classes=adaptive_model.num_classes,
+        patch_size=adaptive_model.patch_size,
+        transformer_heads=adaptive_model.transformer_heads,
+        transformer_expansion_factor=(
+            adaptive_model.transformer_expansion_factor
+        ),
+        transformer_dropout=adaptive_model.transformer_dropout,
+        transformer_ffn_residual_scale=(
+            adaptive_model.transformer_ffn_residual_scale
+        ),
+        transformer_position_encoding=(
+            adaptive_model.transformer_position_encoding
+        ),
+        transformer_cnn_normalization=(
+            adaptive_model.transformer_cnn_normalization
+        ),
+    )
+    compact.load_state_dict(
+        {
+            name: value
+            for name, value in adaptive_model.state_dict().items()
+            if not name.startswith("input_projection.")
+            and not name.startswith("band_gate_head.")
+        },
+        strict=False,
+    )
+    with torch.no_grad():
+        compact.input_projection.weight.copy_(
+            adaptive_model.input_projection.weight.index_select(
+                1, selected_band_indices
+            )
+        )
+        compact.input_projection.bias.copy_(
+            adaptive_model.input_projection.bias
+        )
+    return FrozenBandPrunedClassifier(
+        compact, selected_band_indices.cpu()
+    )
+
+
 def build_model(
     architecture,
     *,
@@ -707,6 +895,8 @@ def build_model(
     transformer_ffn_residual_scale=0.5,
     transformer_position_encoding=TransformerPositionEncoding.LEARNED_2D,
     transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
+    pruning_gate_slope=20.0,
+    pruning_sparsity_weight=0.001,
 ):
     """Build the model selected by the experiment configuration."""
     if architecture == ModelArchitecture.CNN_ONLY:
@@ -746,5 +936,24 @@ def build_model(
             transformer_ffn_residual_scale=transformer_ffn_residual_scale,
             transformer_position_encoding=transformer_position_encoding,
             transformer_cnn_normalization=transformer_cnn_normalization,
+        )
+    if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING:
+        return CNNTransformerCSAAdaptivePruningClassifier(
+            input_channels=input_channels,
+            feature_channels=feature_channels,
+            num_classes=num_classes,
+            patch_size=patch_size,
+            transformer_heads=transformer_heads,
+            transformer_expansion_factor=transformer_expansion_factor,
+            transformer_dropout=transformer_dropout,
+            transformer_ffn_residual_scale=(
+                transformer_ffn_residual_scale
+            ),
+            transformer_position_encoding=transformer_position_encoding,
+            transformer_cnn_normalization=(
+                transformer_cnn_normalization
+            ),
+            pruning_gate_slope=pruning_gate_slope,
+            pruning_sparsity_weight=pruning_sparsity_weight,
         )
     raise ValueError(f"Unsupported model architecture: {architecture}")

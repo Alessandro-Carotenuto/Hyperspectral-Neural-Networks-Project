@@ -44,6 +44,11 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         optimizer.zero_grad(set_to_none=True)
         logits = model(patches)
         loss = criterion(logits, targets)
+        pruning_regularization = getattr(
+            model, "pruning_regularization", None
+        )
+        if pruning_regularization is not None:
+            loss = loss + pruning_regularization(patches)
         loss.backward()
         optimizer.step()
 
@@ -162,9 +167,17 @@ def build_checkpoint_path(
     split_type,
     training_seed,
     sample_amplification_mode=SampleAmplificationMode.DISABLED,
+    pruning_gate_slope=20.0,
+    pruning_sparsity_weight=0.001,
 ):
     """Build a checkpoint path containing the experiment identity."""
     architecture_name = architecture.value
+    if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING:
+        slope_name = f"{pruning_gate_slope:g}".replace(".", "p")
+        sparsity_name = f"{pruning_sparsity_weight:g}".replace(".", "p")
+        architecture_name = (
+            f"{architecture_name}_gs{slope_name}_sp{sparsity_name}"
+        )
     input_normalization = InputNormalization(input_normalization)
     if model_variant:
         architecture_name = f"{architecture_name}_{model_variant}"
@@ -319,14 +332,31 @@ def fit_model(
     }
     best_validation_loss = float("inf")
     best_epoch = 0
+    adaptive_pruning = hasattr(model, "estimate_global_band_mask")
 
     for epoch in range(1, epochs + 1):
         train_loss, train_accuracy = train_one_epoch(
             model, train_loader, criterion, optimizer, device
         )
-        validation_loss, validation_accuracy = evaluate(
-            model, validation_loader, criterion, device
-        )
+        selected_band_indices = None
+        mean_band_gates = None
+        if adaptive_pruning:
+            from models import build_compact_pruned_model
+
+            selected_band_indices, mean_band_gates = (
+                model.estimate_global_band_mask(train_loader, device)
+            )
+            validation_model = build_compact_pruned_model(
+                model, selected_band_indices
+            ).to(device)
+            validation_loss, validation_accuracy = evaluate(
+                validation_model, validation_loader, criterion, device
+            )
+            del validation_model
+        else:
+            validation_loss, validation_accuracy = evaluate(
+                model, validation_loader, criterion, device
+            )
         current_learning_rate = optimizer.param_groups[0]["lr"]
 
         history["train_loss"].append(train_loss)
@@ -357,6 +387,16 @@ def fit_model(
                     "validation_loss": validation_loss,
                     "validation_accuracy": validation_accuracy,
                     "history": history,
+                    **(
+                        {
+                            "selected_band_indices": (
+                                selected_band_indices.tolist()
+                            ),
+                            "mean_band_gates": mean_band_gates.tolist(),
+                        }
+                        if adaptive_pruning
+                        else {}
+                    ),
                     **checkpoint_metadata,
                 },
                 checkpoint_path,
