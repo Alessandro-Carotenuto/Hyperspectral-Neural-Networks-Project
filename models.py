@@ -783,9 +783,18 @@ class CNNTransformerCSAAdaptivePruningClassifier(
                 module.track_running_stats = False
                 module.running_mean = None
                 module.running_var = None
+        dropout_states = []
+        for module in self.ct_block.transformer_branch.modules():
+            if isinstance(module, nn.Dropout) and module.training:
+                dropout_states.append((module, module.training))
+                # Gate prediction should not add stochasticity before the
+                # classification pass, which keeps its dropout behavior intact.
+                module.training = False
         try:
             transformer_features = self.ct_block.transformer_branch(features)
         finally:
+            for module, training in dropout_states:
+                module.training = training
             # Only the classification pass should update persistent BN stats.
             for module, track_running_stats, running_mean, running_var in batch_norm_states:
                 module.track_running_stats = track_running_stats

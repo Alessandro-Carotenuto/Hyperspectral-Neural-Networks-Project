@@ -94,7 +94,7 @@ The attention block applies channel attention followed by spatial attention. Spa
 
 ### Adaptive spectral pruning
 
-The optional `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` architecture predicts soft per-band gates from the Transformer branch, applies them to each training patch, and learns them with the classification loss plus a sparsity penalty. The fixed sigmoid slope is configurable in the notebook. At each epoch, gates from training patches are aggregated with threshold `0.5`; validation selects checkpoints using the resulting compact model. The selected global band mask and a compact checkpoint are saved, with the first projection narrowed to the retained bands. This option has not yet been trained for reported accuracy or latency results.
+The optional `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` architecture predicts soft per-band gates from the Transformer branch, applies them to each training patch, and learns them with the classification loss plus a sparsity penalty. The fixed sigmoid slope is configurable in the notebook. At each epoch, gates from training patches are aggregated with threshold `0.5`; validation selects checkpoints using the resulting compact model. After gate training, the notebook fine-tunes that compact model on the same training split for `PRUNING_FINETUNE_EPOCHS` epochs (default `30`), selects its checkpoint using validation loss, and evaluates it on test data. The first projection is narrowed to the retained bands, so the compact model receives fewer input channels. This option has not yet been trained for reported accuracy or latency results.
 
 ### Sample amplification
 
@@ -146,6 +146,7 @@ The notebook keeps the experiment configuration together near its beginning. Imp
 | `INPUT_NORMALIZATION` | `MIN_MAX` | Per-band min-max or z-score normalization |
 | `PRUNING_GATE_SLOPE` | `20.0` | Fixed sigmoid slope for adaptive spectral gates |
 | `PRUNING_SPARSITY_WEIGHT` | `0.001` | Loss weight encouraging fewer retained bands |
+| `PRUNING_FINETUNE_EPOCHS` | `30` | Fine-tuning epochs for the compact model after gate training |
 | `WEIGHT_DECAY` | `0.0` | Adam weight decay |
 
 The SA values that are not specified by the paper are documented in [the sample amplification note](docs/research/cta_sample_amplification.md). Transformer reconstruction choices are summarized in [the Conformer analysis](docs/research/hsi_conformer_architectures.md).
