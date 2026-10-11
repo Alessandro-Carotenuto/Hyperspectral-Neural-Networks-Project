@@ -765,7 +765,29 @@ class CNNTransformerCSAAdaptivePruningClassifier(
     def predict_band_gates(self, patches):
         """Predict differentiable per-sample gates from Transformer features."""
         features = self.input_projection(patches)
-        transformer_features = self.ct_block.transformer_branch(features)
+        batch_norm_states = []
+        for module in self.ct_block.transformer_branch.modules():
+            if (
+                isinstance(module, nn.modules.batchnorm._BatchNorm)
+                and module.training
+                and module.track_running_stats
+            ):
+                batch_norm_states.append((
+                    module,
+                    module.running_mean.clone(),
+                    module.running_var.clone(),
+                    module.num_batches_tracked.clone(),
+                ))
+        try:
+            transformer_features = self.ct_block.transformer_branch(features)
+        finally:
+            # This auxiliary pass needs batch statistics for its output, but
+            # only the classification pass should update persistent BN stats.
+            with torch.no_grad():
+                for module, running_mean, running_var, batch_count in batch_norm_states:
+                    module.running_mean.copy_(running_mean)
+                    module.running_var.copy_(running_var)
+                    module.num_batches_tracked.copy_(batch_count)
         pooled = transformer_features.mean(dim=(2, 3))
         gate_logits = self.band_gate_head(pooled)
         return torch.sigmoid(self.pruning_gate_slope * gate_logits)
