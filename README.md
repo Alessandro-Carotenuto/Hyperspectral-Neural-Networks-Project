@@ -94,7 +94,7 @@ The attention block applies channel attention followed by spatial attention. Spa
 
 ### Adaptive spectral pruning
 
-The optional `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` architecture predicts soft per-band gates from the Transformer branch, applies them to each training patch, and learns them with the classification loss plus a sparsity penalty. The fixed sigmoid slope is configurable in the notebook. At each epoch, gates from training patches are aggregated with threshold `0.5`; validation selects checkpoints using the resulting compact model. After gate training, the notebook fine-tunes that compact model on the same training split for `PRUNING_FINETUNE_EPOCHS` epochs (default `30`), selects its checkpoint using validation loss, and evaluates it on test data. The first projection is narrowed to the retained bands, so the compact model receives fewer input channels. This option has not yet been trained for reported accuracy or latency results.
+The optional `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` architecture predicts soft per-band gates from the Transformer branch, applies them to each training patch, and learns them with the classification loss plus a sparsity penalty. The sigmoid slope and pruning percentage are configurable in the notebook. At each epoch, gates from training patches are averaged and the bottom `PRUNING_PERCENTAGE` of bands are removed; validation selects checkpoints using the resulting compact model. After gate training, the notebook fine-tunes that compact model on the same training split for `PRUNING_FINETUNE_EPOCHS` epochs (default `30`), selects its checkpoint using validation loss, and evaluates it on test data. The first projection is narrowed to the retained bands, so the compact model receives fewer input channels. This option has not yet been trained for reported accuracy or latency results.
 
 ### Sample amplification
 
@@ -145,7 +145,8 @@ The notebook keeps the experiment configuration together near its beginning. Imp
 | `SAMPLE_AMPLIFICATION_MODE` | `CTA_NET` | Disable SA or use the CTA-Net augmentation |
 | `INPUT_NORMALIZATION` | `MIN_MAX` | Per-band min-max or z-score normalization |
 | `PRUNING_GATE_SLOPE` | `20.0` | Fixed sigmoid slope for adaptive spectral gates |
-| `PRUNING_SPARSITY_WEIGHT` | `0.001` | Loss weight encouraging fewer retained bands |
+| `PRUNING_SPARSITY_WEIGHT` | `0.001` | Loss weight encouraging low gate values |
+| `PRUNING_PERCENTAGE` | `5.0` | Bottom percentage of mean training gates to remove; rounded to the nearest whole number of bands (5 of 103 at the default) |
 | `PRUNING_FINETUNE_EPOCHS` | `30` | Fine-tuning epochs for the compact model after gate training |
 | `WEIGHT_DECAY` | `0.0` | Adam weight decay |
 

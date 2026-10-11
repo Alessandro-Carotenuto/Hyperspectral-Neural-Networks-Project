@@ -720,6 +720,7 @@ class CNNTransformerCSAAdaptivePruningClassifier(
         transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
         pruning_gate_slope=20.0,
         pruning_sparsity_weight=0.001,
+        pruning_percentage=5.0,
     ):
         super().__init__(
             input_channels=input_channels,
@@ -753,10 +754,13 @@ class CNNTransformerCSAAdaptivePruningClassifier(
         )
         self.pruning_gate_slope = float(pruning_gate_slope)
         self.pruning_sparsity_weight = float(pruning_sparsity_weight)
+        self.pruning_percentage = float(pruning_percentage)
         if self.pruning_gate_slope <= 0:
             raise ValueError("Pruning gate slope must be positive")
         if self.pruning_sparsity_weight < 0:
             raise ValueError("Pruning sparsity weight cannot be negative")
+        if not 0 <= self.pruning_percentage < 100:
+            raise ValueError("Pruning percentage must be in [0, 100)")
 
         self.band_gate_head = nn.Linear(feature_channels, input_channels)
         nn.init.zeros_(self.band_gate_head.weight)
@@ -819,8 +823,8 @@ class CNNTransformerCSAAdaptivePruningClassifier(
         return getattr(self, "_last_pruning_penalty", 0.0)
 
     @torch.no_grad()
-    def estimate_global_band_mask(self, loader, device, threshold=0.5):
-        """Aggregate gates over a supplied loader into one fixed band mask."""
+    def estimate_global_band_mask(self, loader, device):
+        """Prune the configured bottom percentage of mean training gates."""
         self.eval()
         gate_sum = torch.zeros(self.input_channels, device=device)
         sample_count = 0
@@ -832,11 +836,17 @@ class CNNTransformerCSAAdaptivePruningClassifier(
         if sample_count == 0:
             raise ValueError("Cannot estimate a band mask from an empty loader")
         mean_gates = gate_sum / sample_count
-        selected_indices = torch.nonzero(
-            mean_gates >= threshold, as_tuple=True
-        )[0]
-        if selected_indices.numel() == 0:
-            selected_indices = mean_gates.argmax().reshape(1)
+        pruned_count = math.floor(
+            self.input_channels * self.pruning_percentage / 100 + 0.5
+        )
+        pruned_count = min(pruned_count, self.input_channels - 1)
+        ranked_indices = torch.argsort(mean_gates, stable=True)
+        pruned_indices = ranked_indices[:pruned_count]
+        keep_mask = torch.ones(
+            self.input_channels, dtype=torch.bool, device=mean_gates.device
+        )
+        keep_mask[pruned_indices] = False
+        selected_indices = torch.nonzero(keep_mask, as_tuple=True)[0]
         return selected_indices.cpu(), mean_gates.cpu()
 
 
@@ -931,6 +941,7 @@ def build_model(
     transformer_cnn_normalization=ConformerCNNNormalization.BATCH_NORM,
     pruning_gate_slope=20.0,
     pruning_sparsity_weight=0.001,
+    pruning_percentage=5.0,
 ):
     """Build the model selected by the experiment configuration."""
     if architecture == ModelArchitecture.CNN_ONLY:
@@ -989,5 +1000,6 @@ def build_model(
             ),
             pruning_gate_slope=pruning_gate_slope,
             pruning_sparsity_weight=pruning_sparsity_weight,
+            pruning_percentage=pruning_percentage,
         )
     raise ValueError(f"Unsupported model architecture: {architecture}")

@@ -169,14 +169,17 @@ def build_checkpoint_path(
     sample_amplification_mode=SampleAmplificationMode.DISABLED,
     pruning_gate_slope=20.0,
     pruning_sparsity_weight=0.001,
+    pruning_percentage=5.0,
 ):
     """Build a checkpoint path containing the experiment identity."""
     architecture_name = architecture.value
     if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING:
         slope_name = f"{pruning_gate_slope:g}".replace(".", "p")
         sparsity_name = f"{pruning_sparsity_weight:g}".replace(".", "p")
+        pruning_name = f"{pruning_percentage:g}".replace(".", "p")
         architecture_name = (
-            f"{architecture_name}_gs{slope_name}_sp{sparsity_name}"
+            f"{architecture_name}_gs{slope_name}_sp{sparsity_name}_"
+            f"pr{pruning_name}pct"
         )
     input_normalization = InputNormalization(input_normalization)
     if model_variant:

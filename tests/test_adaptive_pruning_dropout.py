@@ -1,6 +1,7 @@
 import unittest
 
 import torch
+from torch.utils.data import DataLoader, TensorDataset
 
 from models import (
     CNNTransformerCSAAdaptivePruningClassifier,
@@ -130,6 +131,54 @@ class AdaptivePruningDropoutTests(unittest.TestCase):
                     torch.equal(parameter.grad, adaptive_parameters[name].grad),
                     msg=f"Gradient mismatch for {name}",
                 )
+
+    def test_global_mask_prunes_configured_bottom_percentage(self):
+        self.model.pruning_percentage = 33.0
+        gate_values = torch.tensor([0.8, 0.1, 0.7, 0.2, 0.9, 0.3])
+        self.model.predict_band_gates = lambda patches: gate_values.to(
+            patches.device
+        ).expand(patches.shape[0], -1)
+        loader = DataLoader(
+            TensorDataset(
+                torch.randn(4, 6, 5, 5),
+                torch.zeros(4, dtype=torch.long),
+            ),
+            batch_size=2,
+        )
+
+        selected, mean_gates = self.model.estimate_global_band_mask(
+            loader, torch.device("cpu")
+        )
+
+        self.assertEqual(selected.tolist(), [0, 2, 4, 5])
+        self.assertTrue(torch.allclose(mean_gates, gate_values))
+
+    def test_default_five_percent_prunes_five_of_103_bands(self):
+        model = CNNTransformerCSAAdaptivePruningClassifier(
+            input_channels=103,
+            feature_channels=8,
+            num_classes=3,
+            patch_size=5,
+            transformer_heads=2,
+        )
+        gate_values = torch.arange(103, dtype=torch.float32)
+        model.predict_band_gates = lambda patches: gate_values.to(
+            patches.device
+        ).expand(patches.shape[0], -1)
+        loader = DataLoader(
+            TensorDataset(
+                torch.randn(2, 103, 5, 5),
+                torch.zeros(2, dtype=torch.long),
+            ),
+            batch_size=2,
+        )
+
+        selected, _ = model.estimate_global_band_mask(
+            loader, torch.device("cpu")
+        )
+
+        self.assertEqual(len(selected), 98)
+        self.assertEqual(selected.tolist(), list(range(5, 103)))
 
 
 if __name__ == "__main__":
