@@ -94,7 +94,7 @@ The attention block applies channel attention followed by spatial attention. Spa
 
 ### Adaptive spectral pruning
 
-The optional `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` architecture predicts soft per-band gates from the Transformer branch, applies them to each training patch, and learns them with the classification loss plus a sparsity penalty. The sigmoid slope and pruning percentage are configurable in the notebook. At each epoch, gates from training patches are averaged and the bottom `PRUNING_PERCENTAGE` of bands are removed; validation selects checkpoints using the resulting compact model. After gate training, the notebook fine-tunes that compact model on the same training split for `PRUNING_FINETUNE_EPOCHS` epochs (default `30`), selects its checkpoint using validation loss, and evaluates it on test data. The first projection is narrowed to the retained bands, so the compact model receives fewer input channels. This option has not yet been trained for reported accuracy or latency results.
+The optional `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` architecture predicts soft per-band gates from the Transformer branch, applies them to each training patch, and learns them with the classification loss plus a sparsity penalty. The sigmoid slope and pruning percentage are configurable in the notebook. At each epoch, gates from training patches are averaged and the bottom `PRUNING_PERCENTAGE` of bands are removed; validation selects checkpoints using the resulting compact model. `PRUNING_FINETUNE_EPOCHS` optionally fine-tunes the compact model on the training split (default `30`); set it to `0` to evaluate the binary-pruned model without this stage. The first projection is narrowed to the retained bands, so the compact model receives fewer input channels. FLOPs and latency measurements are not yet recorded here.
 
 ### Sample amplification
 
@@ -147,7 +147,7 @@ The notebook keeps the experiment configuration together near its beginning. Imp
 | `PRUNING_GATE_SLOPE` | `20.0` | Fixed sigmoid slope for adaptive spectral gates |
 | `PRUNING_SPARSITY_WEIGHT` | `0.001` | Loss weight encouraging low gate values |
 | `PRUNING_PERCENTAGE` | `5.0` | Bottom percentage of mean training gates to remove; rounded to the nearest whole number of bands (5 of 103 at the default) |
-| `PRUNING_FINETUNE_EPOCHS` | `30` | Fine-tuning epochs for the compact model after gate training |
+| `PRUNING_FINETUNE_EPOCHS` | `30` | Compact-model fine-tuning epochs; set to `0` to skip fine-tuning |
 | `WEIGHT_DECAY` | `0.0` | Adam weight decay |
 
 The SA values that are not specified by the paper are documented in [the sample amplification note](docs/research/cta_sample_amplification.md). Transformer reconstruction choices are summarized in [the Conformer analysis](docs/research/hsi_conformer_architectures.md).
