@@ -146,6 +146,53 @@ def plot_confusion_matrix(
     plt.show()
 
 
+def plot_pruning_mask(mean_band_gates, selected_band_indices, run_label):
+    """Show the global binary mask and mean learned gate for every band."""
+    mean_band_gates = np.asarray(mean_band_gates, dtype=float).reshape(-1)
+    selected_band_indices = np.asarray(
+        selected_band_indices, dtype=int
+    ).reshape(-1)
+    selected_mask = np.zeros(mean_band_gates.size, dtype=bool)
+    selected_mask[selected_band_indices] = True
+    band_numbers = np.arange(1, mean_band_gates.size + 1)
+    colors = np.where(selected_mask, "seagreen", "lightgray")
+    retained_count = int(selected_mask.sum())
+
+    figure, axes = plt.subplots(
+        2, 1, figsize=(14, 5.5), sharex=True,
+        gridspec_kw={"height_ratios": [1, 2]},
+    )
+    axes[0].bar(band_numbers, selected_mask.astype(int), color=colors)
+    axes[0].set_yticks([0, 1], labels=["Dropped", "Kept"])
+    axes[0].set_ylim(-0.1, 1.2)
+    axes[0].set_title(
+        f"Adaptive spectral pruning mask — {run_label} "
+        f"({retained_count}/{mean_band_gates.size} bands kept)"
+    )
+    axes[0].grid(axis="x", alpha=0.15)
+
+    axes[1].plot(
+        band_numbers, mean_band_gates, color="steelblue", linewidth=1.5
+    )
+    axes[1].scatter(
+        band_numbers[selected_mask], mean_band_gates[selected_mask],
+        color="seagreen", s=18, label="Kept",
+    )
+    axes[1].scatter(
+        band_numbers[~selected_mask], mean_band_gates[~selected_mask],
+        color="gray", s=18, label="Dropped",
+    )
+    axes[1].axhline(0.5, color="darkorange", linestyle="--", label="0.5 threshold")
+    axes[1].set_xlabel("Original spectral band")
+    axes[1].set_ylabel("Mean gate")
+    axes[1].set_ylim(-0.05, 1.05)
+    axes[1].set_xlim(0.5, mean_band_gates.size + 0.5)
+    axes[1].grid(alpha=0.25)
+    axes[1].legend(loc="best")
+    plt.tight_layout()
+    plt.show()
+
+
 def plot_classification_map(
     ground_truth,
     classification_map,
