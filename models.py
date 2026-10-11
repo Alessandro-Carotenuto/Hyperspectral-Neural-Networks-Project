@@ -774,20 +774,23 @@ class CNNTransformerCSAAdaptivePruningClassifier(
             ):
                 batch_norm_states.append((
                     module,
-                    module.running_mean.clone(),
-                    module.running_var.clone(),
-                    module.num_batches_tracked.clone(),
+                    module.track_running_stats,
+                    module.running_mean,
+                    module.running_var,
                 ))
+                # With no running buffers, BatchNorm uses current batch
+                # statistics without updating persistent buffers.
+                module.track_running_stats = False
+                module.running_mean = None
+                module.running_var = None
         try:
             transformer_features = self.ct_block.transformer_branch(features)
         finally:
-            # This auxiliary pass needs batch statistics for its output, but
-            # only the classification pass should update persistent BN stats.
-            with torch.no_grad():
-                for module, running_mean, running_var, batch_count in batch_norm_states:
-                    module.running_mean.copy_(running_mean)
-                    module.running_var.copy_(running_var)
-                    module.num_batches_tracked.copy_(batch_count)
+            # Only the classification pass should update persistent BN stats.
+            for module, track_running_stats, running_mean, running_var in batch_norm_states:
+                module.track_running_stats = track_running_stats
+                module.running_mean = running_mean
+                module.running_var = running_var
         pooled = transformer_features.mean(dim=(2, 3))
         gate_logits = self.band_gate_head(pooled)
         return torch.sigmoid(self.pruning_gate_slope * gate_logits)
