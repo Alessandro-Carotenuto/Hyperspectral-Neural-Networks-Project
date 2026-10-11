@@ -441,3 +441,46 @@ Entrambi i run usano la pipeline completa, split 42, gli stessi 10 training seed
 | Self-Blocking Bricks | 95,79 ± 1,12% | 91,96 ± 6,28% | 94,15 ± 2,89% | 94,44 ± 2,02% |
 | Shadows | 96,28 ± 1,87% | 95,49 ± 1,70% | 96,37 ± 2,33% | 95,86 ± 2,48% |
 
+## Adaptive spectral pruning — risultati su Pavia University
+
+Report Kaggle forniti dall'utente: split fisso `42`, 10 training seed della lista `TRAINING_SEEDS_FIXED`. I valori sono medie ± deviazione standard campionaria tra training seed condizionati allo stesso split; non rappresentano 10 split indipendenti. Per il bottom-k, il 5% corrisponde a 5 bande rimosse (98 mantenute) e il 20% a 21 bande rimosse (82 mantenute). I risultati sotto differiscono per percentuale di pruning, numero di heads e fine-tuning del modello compatto.
+
+| Heads | Fine-tuning compatto | OA | AA | Kappa |
+|---:|---:|---:|---:|---:|
+| 4 | 30 epoche, pruning 5% | 84,73 ± 4,28% | 87,91 ± 2,59% | 80,41 ± 5,23% |
+| 8 | 30 epoche, pruning 5% | 87,17 ± 2,32% | 88,96 ± 1,68% | 83,29 ± 2,92% |
+| 4 | 0 epoche | 55,73 ± 8,40% | 59,84 ± 5,32% | 44,52 ± 8,70% |
+| 4 | 30 epoche, pruning 20% | 86,56 ± 2,16% | 88,05 ± 2,18% | 82,48 ± 2,64% |
+| 8 | 30 epoche, pruning 20% | 85,36 ± 4,34% | 88,99 ± 1,57% | 81,17 ± 5,11% |
+
+Le metriche aggregate dopo 30 epoche sono descrittivamente vicine tra 4 e 8 heads a pruning 20%: OA differisce di 1,20 punti percentuali. A pruning 5%, il report a 8 heads ha OA superiore di 2,44 punti rispetto a 4 heads. I soli aggregati non dimostrano equivalenza né significatività statistica; per un confronto appaiato servono i risultati per singolo seed. I confronti tra percentuali di pruning cambiano anche il subset scelto. Il confronto 4 heads con 0 contro 30 epoche non isola l'effetto del numero di heads: cambia anche l'addestramento del modello compatto.
+
+### Accuratezza per classe
+
+| Classe | 4h, 5%, 30 epoche | 8h, 5%, 30 epoche | 4h, 20%, 0 epoche | 4h, 20%, 30 epoche | 8h, 20%, 30 epoche |
+|---|---:|---:|---:|---:|---:|
+| Asphalt | 82,97 ± 5,48% | 83,93 ± 1,98% | 21,44 ± 24,20% | 81,71 ± 3,09% | 83,48 ± 2,92% |
+| Meadows | 81,96 ± 9,72% | 88,00 ± 5,05% | 65,09 ± 16,60% | 88,18 ± 6,04% | 83,53 ± 10,54% |
+| Gravel | 77,73 ± 7,95% | 78,02 ± 8,19% | 27,98 ± 28,46% | 75,00 ± 10,19% | 82,35 ± 7,75% |
+| Trees | 89,16 ± 3,40% | 87,95 ± 2,27% | 86,00 ± 10,46% | 87,57 ± 3,46% | 89,44 ± 1,62% |
+| Painted metal sheets | 97,41 ± 2,12% | 97,37 ± 2,47% | 91,39 ± 10,89% | 97,95 ± 2,27% | 97,90 ± 1,87% |
+| Bare Soil | 84,43 ± 9,93% | 80,31 ± 9,35% | 26,79 ± 28,34% | 78,62 ± 10,27% | 79,65 ± 7,49% |
+| Bitumen | 87,95 ± 7,89% | 95,87 ± 2,82% | 42,80 ± 32,45% | 92,06 ± 5,10% | 96,34 ± 3,07% |
+| Self-Blocking Bricks | 94,22 ± 2,34% | 93,93 ± 3,13% | 81,85 ± 17,11% | 95,07 ± 2,05% | 93,23 ± 2,65% |
+| Shadows | 95,40 ± 2,75% | 95,26 ± 2,05% | 95,24 ± 4,17% | 96,23 ± 2,30% | 95,00 ± 3,04% |
+
+### Interpretazione del percorso di pruning
+
+- In training, `CNNTransformerCSAAdaptivePruningClassifier.predict_band_gates` produce gate sigmoidali morbidi e dipendenti dal campione per tutte le bande. La classificazione usa l'input moltiplicato per questi gate; i valori non sono una maschera binaria durante il training.
+- La maschera globale si ottiene facendo la media dei gate sui soli campioni del training loader e rimuovendo il numero configurato di bande con punteggio medio più basso. Validation e test non contribuiscono alla selezione.
+- Nel bottom-k, il valore `0.5` eventualmente disegnato nel grafico dei gate è una linea di riferimento visiva: non è la soglia usata per decidere quali bande eliminare. La selezione rimuove esattamente il numero previsto dalla percentuale, arrotondato al numero intero più vicino.
+- Validation e test usano gli indici selezionati come maschera binaria: il wrapper compatto seleziona le bande con `index_select` e il primo layer viene ristretto agli stessi canali. Le metriche riportate non sono quindi calcolate con i gate soft.
+- Con `PRUNING_FINETUNE_EPOCHS = 0`, il modello compatto eredita i pesi del classificatore addestrato sul modello a 103 bande con gate morbidi; la proiezione iniziale viene copiata soltanto sui canali mantenuti. Non riceve un addestramento di adattamento dopo il cambio di input. Il risultato 4h senza fine-tuning mostra che questa conversione può causare un forte calo.
+- Le 30 epoche aggiornano il classificatore compatto usando solo le bande mantenute e i dati di training; validation seleziona il checkpoint e test resta escluso dall'addestramento. I risultati con e senza questo passaggio sono protocolli distinti e vanno etichettati separatamente.
+
+Il risultato senza fine-tuning è utile come misura del trasferimento immediato dei pesi, ma non va confrontato come se fosse lo stesso protocollo dei modelli compatti riaddestrati. Per misurare il solo effetto delle heads, mantenere uguali percentuale di pruning, epoche di fine-tuning, split e seed; registrare anche le metriche per seed. FLOPs e latenza del modello compatto non sono ancora stati misurati.
+
+### Variante precedente con soglia fissa
+
+Un report precedente a 4 heads (`gs20_sp0p001`, prima del bottom-k) ha ottenuto OA `61,71 ± 5,47%`, AA `69,39 ± 4,82%` e Kappa `52,27 ± 5,87%`; i grafici mostravano solo 2–3 bande eliminate. Questa variante usava una decisione a soglia e non imponeva una quota di pruning, quindi non è direttamente confrontabile con i risultati bottom-k al 5% o al 20%. Per gli esperimenti successivi è stato adottato il bottom-k con quota esplicita.
+

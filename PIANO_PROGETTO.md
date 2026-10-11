@@ -523,28 +523,34 @@ Un secondo dataset ha priorità maggiore di molte piccole varianti architettural
 
 Confrontare split casuale del paper con split spaziale a blocchi. Presentare lo split spaziale come test aggiuntivo, non come replica diretta.
 
-## Livello 7: Honors
+## Livello 7: Honors — adaptive spectral band pruning
 
-### Obiettivo
+### Obiettivo e implementazione attuale
 
-Adaptive spectral band pruning guidato da attention.
+Il channel attention CSA pesa feature interne, non direttamente le 103 bande originali. L'architettura opzionale `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` aggiunge quindi `CNNTransformerCSAAdaptivePruningClassifier`: `predict_band_gates` mappa le feature del ramo Transformer a un gate sigmoidale per banda. I gate sono morbidi e dipendenti dal campione durante il training; la classificazione usa i patch moltiplicati per i gate e la loss include una penalità di sparsità. Il passaggio che predice i gate disabilita il dropout del ramo Transformer e non aggiorna le statistiche persistenti di BatchNorm.
 
-Il channel attention del paper pesa feature interne, non direttamente le 103 bande originali. Honors richiede quindi un meccanismo aggiuntivo prima della convoluzione iniziale.
+`estimate_global_band_mask` calcola la media dei gate esclusivamente sui campioni del training loader e rimuove una quota fissa delle bande con punteggio medio più basso. La selezione risultante è globale al dataset/run, non una maschera diversa a ogni inferenza. Validation e test usano la maschera binaria: `FrozenBandPrunedClassifier` seleziona gli indici con `index_select`, mentre `build_compact_pruned_model` costruisce una CTA-Net il cui primo layer riceve solo i canali mantenuti. Le metriche di test sono quindi riferite al modello compatto e non ai gate soft.
 
-Possibile soluzione:
+### Cosa hanno mostrato i primi risultati
 
-1. aggiungere gate apprendibile per ogni banda;
-2. combinare gate e informazioni del Transformer;
-3. stimare importanza media delle 103 bande;
-4. mantenere diverse percentuali di bande;
-5. ricostruire input e primo layer con meno bande;
-6. fare fine-tuning;
-7. misurare OA, AA, Kappa, FLOPs e latenza;
-8. tracciare accuracy rispetto alla percentuale di bande eliminate.
+Su Pavia University, split 42 e stessi 10 training seed, con pruning del 20% (21 bande eliminate, 82 mantenute):
 
-Azzerare bande mantenendo input da 103 canali non riduce realmente FLOPs. Il modello finale deve elaborare un numero minore di bande.
+| Heads | Fine-tuning compatto | OA | AA | Kappa |
+|---:|---:|---:|---:|---:|
+| 4 | 0 epoche | 55,73 ± 8,40% | 59,84 ± 5,32% | 44,52 ± 8,70% |
+| 4 | 30 epoche | 86,56 ± 2,16% | 88,05 ± 2,18% | 82,48 ± 2,64% |
+| 8 | 30 epoche | 85,36 ± 4,34% | 88,99 ± 1,57% | 81,17 ± 5,11% |
 
-Questa estensione richiede approvazione preventiva per Honors.
+Con 30 epoche i risultati aggregati di 4 e 8 heads sono vicini, ma i soli aggregati non dimostrano equivalenza statistica. Il confronto 0 contro 30 epoche non isola l'effetto delle heads: senza fine-tuning il compatto eredita i pesi appresi con ingresso a 103 bande e gate soft, copiando la proiezione iniziale solo per i canali mantenuti. Il modello deve invece adattarsi al nuovo input; il forte calo a 0 epoche misura questo trasferimento immediato dei pesi. Per i dettagli e l'accuratezza per classe, vedere `ablations.md`.
+
+### Prossimi passi misurabili
+
+1. Quando richiesto, confrontare 4 e 8 heads mantenendo identici split 42, training seed, percentuale di pruning e protocollo di fine-tuning; conservare i risultati per seed per un confronto appaiato.
+2. Registrare per ogni configurazione OA, AA, Kappa, accuratezza per classe, bande mantenute e stabilità della selezione tra seed.
+3. Misurare FLOPs e latenza con stesso hardware, batch size, warm-up e numero di ripetizioni per baseline a 103 bande e modelli compatti.
+4. Tracciare accuratezza e costo in funzione della quota di bande mantenute. Distinguere il costo di addestramento del selettore e del fine-tuning dal costo d'inferenza del modello compatto.
+
+Azzerare bande mantenendo input da 103 canali non riduce realmente il costo delle convoluzioni. La riduzione si misura sul modello compatto; un insieme globale fissato permette inoltre al sensore o al preprocessing a monte di acquisire/fornire soltanto le bande selezionate, se il deployment lo supporta.
 
 ## Ordine di priorità
 
