@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from models import (
-    CNNTransformerCSAAdaptivePruningClassifier,
+    CNNTransformerCSAMHSARawBandSTEPruningClassifier,
     CNNTransformerCSAClassifier,
 )
 
@@ -12,7 +12,7 @@ from models import (
 class AdaptivePruningDropoutTests(unittest.TestCase):
     def setUp(self):
         torch.manual_seed(17)
-        self.model = CNNTransformerCSAAdaptivePruningClassifier(
+        self.model = CNNTransformerCSAMHSARawBandSTEPruningClassifier(
             input_channels=6,
             feature_channels=8,
             num_classes=3,
@@ -25,7 +25,7 @@ class AdaptivePruningDropoutTests(unittest.TestCase):
 
     def test_gate_pass_disables_dropout_without_blocking_gradients(self):
         with torch.no_grad():
-            self.model.band_gate_head.weight.normal_()
+            self.model.band_gate_head[-1].weight.normal_()
 
         transformer_batch_norms = [
             module
@@ -60,7 +60,7 @@ class AdaptivePruningDropoutTests(unittest.TestCase):
         )
 
         gates.sum().backward()
-        self.assertIsNotNone(self.model.band_gate_head.weight.grad)
+        self.assertIsNotNone(self.model.band_gate_head[-1].weight.grad)
         self.assertIsNotNone(
             self.model.ct_block.transformer_branch
             .self_attention.qkv_projection.weight.grad
@@ -154,7 +154,7 @@ class AdaptivePruningDropoutTests(unittest.TestCase):
         self.assertTrue(torch.allclose(mean_gates, gate_values))
 
     def test_default_five_percent_prunes_five_of_103_bands(self):
-        model = CNNTransformerCSAAdaptivePruningClassifier(
+        model = CNNTransformerCSAMHSARawBandSTEPruningClassifier(
             input_channels=103,
             feature_channels=8,
             num_classes=3,

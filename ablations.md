@@ -441,7 +441,9 @@ Entrambi i run usano la pipeline completa, split 42, gli stessi 10 training seed
 | Self-Blocking Bricks | 95,79 ± 1,12% | 91,96 ± 6,28% | 94,15 ± 2,89% | 94,44 ± 2,02% |
 | Shadows | 96,28 ± 1,87% | 95,49 ± 1,70% | 96,37 ± 2,33% | 95,86 ± 2,48% |
 
-## Adaptive spectral pruning — risultati su Pavia University
+## Adaptive spectral pruning — risultati storici e variante STE supportata
+
+Le tabelle legacy riportano esperimenti delle precedenti varianti non-STE; restano come confronto storico, ma tali architetture non sono più selezionabili nel codice. L'unica variante di pruning supportata è `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING`.
 
 Report Kaggle forniti dall'utente: split fisso `42`, 10 training seed della lista `TRAINING_SEEDS_FIXED`. I valori sono medie ± deviazione standard campionaria tra training seed condizionati allo stesso split; non rappresentano 10 split indipendenti. Per il bottom-k, il 5% corrisponde a 5 bande rimosse (98 mantenute) e il 20% a 21 bande rimosse (82 mantenute). I risultati sotto differiscono per percentuale di pruning, numero di heads e fine-tuning del modello compatto.
 
@@ -471,7 +473,7 @@ Le metriche aggregate dopo 30 epoche sono descrittivamente vicine tra 4 e 8 head
 
 ### Interpretazione del percorso di pruning
 
-- In training, `CNNTransformerCSAAdaptivePruningClassifier.predict_band_gates` produce gate sigmoidali morbidi e dipendenti dal campione per tutte le bande. La classificazione usa l'input moltiplicato per questi gate; i valori non sono una maschera binaria durante il training.
+- Nelle varianti storiche non-STE, il classificatore usava gate sigmoidali morbidi e dipendenti dal campione durante tutto il training. Questo comportamento non descrive la variante STE supportata.
 - La maschera globale si ottiene facendo la media dei gate sui soli campioni del training loader e rimuovendo il numero configurato di bande con punteggio medio più basso. Validation e test non contribuiscono alla selezione.
 - Nel bottom-k, il valore `0.5` eventualmente disegnato nel grafico dei gate è una linea di riferimento visiva: non è la soglia usata per decidere quali bande eliminare. La selezione rimuove esattamente il numero previsto dalla percentuale, arrotondato al numero intero più vicino.
 - Validation e test usano gli indici selezionati come maschera binaria: il wrapper compatto seleziona le bande con `index_select` e il primo layer viene ristretto agli stessi canali. Le metriche riportate non sono quindi calcolate con i gate soft.

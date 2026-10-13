@@ -32,9 +32,11 @@ class TrainingConfigurationTests(unittest.TestCase):
 
         self.assertTrue(path.name.endswith("_sa-cta_net.pt"))
 
-    def test_adaptive_pruning_percentage_is_part_of_checkpoint_identity(self):
+    def test_ste_pruning_percentage_is_part_of_checkpoint_identity(self):
         common = {
-            "architecture": ModelArchitecture.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING,
+            "architecture": (
+                ModelArchitecture.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING
+            ),
             "transformer_heads": 4,
             "transformer_expansion_factor": 4,
             "transformer_dropout": 0.1,

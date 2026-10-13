@@ -94,11 +94,7 @@ The attention block applies channel attention followed by spatial attention. Spa
 
 ### Adaptive spectral pruning (experimental)
 
-Three optional classifiers explore ways to score the 103 input spectral bands using the existing Transformer/MHSA branch; none adds another Transformer:
-
-- `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` predicts soft, sample-dependent band gates from Transformer context.
-- `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_PRUNING` combines MHSA context with one raw spatial-mean descriptor per band. The descriptors do not use a convolution across bands.
-- `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING` uses the raw-mean scorer and, after a 10-epoch warm-up, trains with a global binary band mask in the forward pass and a soft gradient estimate (STE). Each pruning budget requires its own training run.
+The only supported adaptive pruning architecture is `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING`. It uses the existing Transformer/MHSA branch and combines its attention context with one raw spatial-mean descriptor per band; there is no convolution across bands and no additional Transformer. After a 10-epoch warm-up, training uses a global binary band mask in the forward pass and a soft gradient estimate (STE). Each pruning budget requires its own training run. Earlier non-STE variants are retained only in the historical experiment results in `ablations.md`.
 
 For evaluation and deployment, the selected subset is fixed across patches. The normalized image cube is filtered once before patch extraction, and a compact classifier is built with its first projection restricted to the retained bands. The pruning head is therefore not part of compact-model inference. `PRUNING_FINETUNE_EPOCHS` controls optional compact-classifier training on the training split (default `30`; set to `0` to skip it). Without this fine-tuning, the compact model receives copied classifier weights and a sliced first-projection kernel learned with the original 103-band input, so its accuracy is not directly comparable to a fine-tuned compact model.
 
