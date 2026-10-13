@@ -92,9 +92,17 @@ The Transformer branch follows a Conformer-style block with two feed-forward mod
 
 The attention block applies channel attention followed by spatial attention. Spatial descriptors include the maximum, minimum, mean, and standard deviation across channels. Each attention stage has a residual connection.
 
-### Adaptive spectral pruning
+### Adaptive spectral pruning (experimental)
 
-The optional `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` architecture predicts soft, sample-dependent per-band gates from the Transformer branch and applies them to each training patch; the classification loss and a sparsity penalty train the gates. After each epoch, gates are averaged over training patches only and the configured bottom percentage is converted to one fixed binary band mask. Validation and test use that mask through a compact classifier whose first projection has only the retained input channels; they do not use the soft gates. `PRUNING_FINETUNE_EPOCHS` controls optional training of this compact classifier on the training split (default `30`; set to `0` to skip it). With zero compact fine-tuning, the compact model uses copied classifier weights and a sliced first-projection kernel learned while the 103-band model was trained with soft gates. This is a different input/training condition and can cause a large accuracy drop; zero and nonzero fine-tuning results are not a like-for-like comparison of heads alone. Pavia University results and this caveat are recorded in `ablations.md`. FLOPs and latency measurements are not yet recorded.
+Three optional classifiers explore ways to score the 103 input spectral bands using the existing Transformer/MHSA branch; none adds another Transformer:
+
+- `CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING` predicts soft, sample-dependent band gates from Transformer context.
+- `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_PRUNING` combines MHSA context with one raw spatial-mean descriptor per band. The descriptors do not use a convolution across bands.
+- `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING` uses the raw-mean scorer and, after a 10-epoch warm-up, trains with a global binary band mask in the forward pass and a soft gradient estimate (STE). Each pruning budget requires its own training run.
+
+For evaluation and deployment, the selected subset is fixed across patches. The normalized image cube is filtered once before patch extraction, and a compact classifier is built with its first projection restricted to the retained bands. The pruning head is therefore not part of compact-model inference. `PRUNING_FINETUNE_EPOCHS` controls optional compact-classifier training on the training split (default `30`; set to `0` to skip it). Without this fine-tuning, the compact model receives copied classifier weights and a sliced first-projection kernel learned with the original 103-band input, so its accuracy is not directly comparable to a fine-tuned compact model.
+
+Pavia University accuracy and CPU inference measurements are recorded in `ablations.md`. The current 70/80/90% sweep uses one fixed train/validation split and five training seeds; its single-thread compact-model timing differences are modest and noisy, so it does not establish a robust inference speedup. The 99% STE run is a one-seed diagnostic and also showed nearly unchanged latency. These results do not include test-set metrics or establish generalization to other sensors or hardware.
 
 ### Sample amplification
 

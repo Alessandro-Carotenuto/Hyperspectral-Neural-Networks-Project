@@ -173,7 +173,7 @@ def build_checkpoint_path(
 ):
     """Build a checkpoint path containing the experiment identity."""
     architecture_name = architecture.value
-    if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING:
+    if architecture.uses_adaptive_pruning:
         slope_name = f"{pruning_gate_slope:g}".replace(".", "p")
         sparsity_name = f"{pruning_sparsity_weight:g}".replace(".", "p")
         pruning_name = f"{pruning_percentage:g}".replace(".", "p")
@@ -338,6 +338,10 @@ def fit_model(
     adaptive_pruning = hasattr(model, "estimate_global_band_mask")
 
     for epoch in range(1, epochs + 1):
+        set_ste_enabled = getattr(model, "set_ste_enabled", None)
+        if callable(set_ste_enabled):
+            warmup_epochs = getattr(model, "ste_warmup_epochs", 0)
+            set_ste_enabled(epoch > warmup_epochs)
         train_loss, train_accuracy = train_one_epoch(
             model, train_loader, criterion, optimizer, device
         )
@@ -349,6 +353,11 @@ def fit_model(
             selected_band_indices, mean_band_gates = (
                 model.estimate_global_band_mask(train_loader, device)
             )
+            set_global_pruning_mask = getattr(
+                model, "set_global_pruning_mask", None
+            )
+            if callable(set_global_pruning_mask):
+                set_global_pruning_mask(selected_band_indices)
             validation_model = build_compact_pruned_model(
                 model, selected_band_indices
             ).to(device)

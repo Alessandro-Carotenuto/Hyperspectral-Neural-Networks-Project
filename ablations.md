@@ -478,7 +478,38 @@ Le metriche aggregate dopo 30 epoche sono descrittivamente vicine tra 4 e 8 head
 - Con `PRUNING_FINETUNE_EPOCHS = 0`, il modello compatto eredita i pesi del classificatore addestrato sul modello a 103 bande con gate morbidi; la proiezione iniziale viene copiata soltanto sui canali mantenuti. Non riceve un addestramento di adattamento dopo il cambio di input. Il risultato 4h senza fine-tuning mostra che questa conversione può causare un forte calo.
 - Le 30 epoche aggiornano il classificatore compatto usando solo le bande mantenute e i dati di training; validation seleziona il checkpoint e test resta escluso dall'addestramento. I risultati con e senza questo passaggio sono protocolli distinti e vanno etichettati separatamente.
 
-Il risultato senza fine-tuning è utile come misura del trasferimento immediato dei pesi, ma non va confrontato come se fosse lo stesso protocollo dei modelli compatti riaddestrati. Per misurare il solo effetto delle heads, mantenere uguali percentuale di pruning, epoche di fine-tuning, split e seed; registrare anche le metriche per seed. FLOPs e latenza del modello compatto non sono ancora stati misurati.
+Il risultato senza fine-tuning è utile come misura del trasferimento immediato dei pesi, ma non va confrontato come se fosse lo stesso protocollo dei modelli compatti riaddestrati. Per misurare il solo effetto delle heads, mantenere uguali percentuale di pruning, epoche di fine-tuning, split e seed; registrare anche le metriche per seed. Le misure di latenza dei successivi esperimenti raw-mean e STE, con protocollo diverso e dichiarato sotto, sono riportate nelle sezioni seguenti; non retrodatano quei risultati Kaggle. Le FLOPs non sono state misurate.
+
+### Raw-mean contro STE: training completo a 70/80/90%
+
+Confronto appaiato su Pavia University: split `42` (90 campioni di training, 45 validation), training seed `[1496815513, 1940408339, 194592138, 628378136, 109688099]`, 150 epoche per modello e budget, seguite da 30 epoche di fine-tuning del classificatore compatto. Entrambe le varianti hanno usato CPU, slope `20`, 16 feature channels, 4 teste, patch `15` e batch `32`. Per lo STE il warm-up è di 10 epoche. La test split non è stata usata. Il 70/80/90% corrisponde rispettivamente a 72/82/93 bande rimosse, quindi 31/21/10 mantenute.
+
+Accuratezza sul validation set del modello compatto dopo fine-tuning, media ± deviazione standard campionaria tra i cinque training seed:
+
+| Bande rimosse | Raw-mean senza STE | Raw-mean con STE |
+|---:|---:|---:|
+| 70% | 53,8 ± 11,9% | 82,7 ± 3,3% |
+| 80% | 53,8 ± 9,9% | 83,6 ± 2,0% |
+| 90% | 44,9 ± 10,6% | 78,7 ± 6,6% |
+
+I timing sono un rebenchmark CPU a thread singolo (`torch.set_num_threads(1)`), con cinque forward di warm-up, 50 ripetizioni batch-1 e 30 batch-32. La selezione fissa delle bande è stata applicata una sola volta al cubo normalizzato prima di estrarre i patch. La tabella riporta ms per campione a batch 32 e rapporto `full-band / compatto dopo fine-tuning` (un rapporto sopra 1 favorisce il compatto):
+
+| Bande rimosse | Variante | Full-band (ms/campione) | Compatto (ms/campione) | Rapporto |
+|---:|---|---:|---:|---:|
+| 70% | Raw-mean senza STE | 2,145 | 2,480 | 0,86× |
+| 70% | Raw-mean con STE | 2,362 | 2,530 | 0,93× |
+| 80% | Raw-mean senza STE | 2,530 | 2,304 | 1,10× |
+| 80% | Raw-mean con STE | 2,210 | 2,126 | 1,04× |
+| 90% | Raw-mean senza STE | 2,513 | 2,336 | 1,08× |
+| 90% | Raw-mean con STE | 2,192 | 2,119 | 1,03× |
+
+Questi numeri indicano un possibile vantaggio modesto a 80/90%, mentre a 70% il compatto è più lento. La dispersione tra seed dei rapporti è ampia soprattutto all'80%; il timing non è quindi una prova robusta di speedup. Sono misure del classificatore compatto dopo aver filtrato il cubo, non del percorso che calcola gli score di pruning a ogni patch. Report completo: `outputs/diagnostics/adaptive_raw_mean_ste_budget_sweep_70_80_90_full_training_5seeds.json`.
+
+### Prova STE con pruning al 99%
+
+Un solo training seed (`1496815513`), con split `42`, protocollo di training e fine-tuning analogo alla sweep precedente. Sono state rimosse 102 bande su 103; è rimasta la banda 96 (indice 1-based). L'accuratezza validation del compatto è passata da 51,1% prima del fine-tuning a 46,7% dopo 30 epoche. Il test set non è stato usato.
+
+Nel rebenchmark CPU a thread singolo, batch 1: `2,095 ms` per campione full-band e `2,045 ms` compatto. Batch 32: `1,058 ms` per campione full-band e `1,047 ms` compatto, rapporto `1,01×`. La filtrazione del cubo una tantum è stata misurata in circa `0,168 ms`; il vantaggio sulla latenza del modello resta praticamente nullo e il dato è un singolo run diagnostico. Report: `outputs/diagnostics/raw_mean_ste_99pct_seed1496815513.json`.
 
 ### Variante precedente con soglia fissa
 

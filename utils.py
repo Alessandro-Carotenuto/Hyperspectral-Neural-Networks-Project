@@ -95,6 +95,12 @@ class ModelArchitecture(StrEnum):
     CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING = (
         "cnn_transformer_csa_adaptive_pruning"
     )
+    CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_PRUNING = (
+        "cnn_transformer_csa_mhsa_raw_band_pruning"
+    )
+    CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING = (
+        "cnn_transformer_csa_mhsa_raw_band_ste_pruning"
+    )
 
     @property
     def display_name(self):
@@ -105,6 +111,10 @@ class ModelArchitecture(StrEnum):
             self.CNN_TRANSFORMER_CSA: "CNN-Transformer-CSA",
             self.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING:
                 "CNN-Transformer-CSA-Adaptive-Pruning",
+            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_PRUNING:
+                "CNN-Transformer-CSA-MHSA-Raw-Band-Pruning",
+            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING:
+                "CNN-Transformer-CSA-MHSA-Raw-Band-STE-Pruning",
         }[self]
 
     @property
@@ -113,6 +123,8 @@ class ModelArchitecture(StrEnum):
             self.CNN_TRANSFORMER,
             self.CNN_TRANSFORMER_CSA,
             self.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING,
+            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_PRUNING,
+            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING,
         }
 
     @property
@@ -121,4 +133,14 @@ class ModelArchitecture(StrEnum):
             self.CNN_CSA,
             self.CNN_TRANSFORMER_CSA,
             self.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING,
+            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_PRUNING,
+            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING,
+        }
+
+    @property
+    def uses_adaptive_pruning(self):
+        return self in {
+            self.CNN_TRANSFORMER_CSA_ADAPTIVE_PRUNING,
+            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_PRUNING,
+            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING,
         }

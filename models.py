@@ -419,7 +419,7 @@ class TransformerBranch(nn.Module):
         )
         self.final_normalization = nn.LayerNorm(channels)
 
-    def forward(self, features):
+    def forward_attention_output(self, features):
         batch_size, channels, height, width = features.shape
         expected_shape = (self.channels, self.height, self.width)
         if (channels, height, width) != expected_shape:
@@ -430,13 +430,22 @@ class TransformerBranch(nn.Module):
 
         tokens = features.flatten(start_dim=2).transpose(1, 2)
         tokens = self.feed_forward_1(tokens)
-        tokens = self.self_attention(tokens)
-        tokens = self.cnn_module(tokens)
+        return self.self_attention(tokens)
+
+    def forward_with_attention_output(self, features):
+        batch_size, channels, height, width = features.shape
+        attention_output = self.forward_attention_output(features)
+        tokens = self.cnn_module(attention_output)
         tokens = self.feed_forward_2(tokens)
         tokens = self.final_normalization(tokens)
-        return tokens.transpose(1, 2).reshape(
+        transformer_features = tokens.transpose(1, 2).reshape(
             batch_size, channels, height, width
         )
+        return transformer_features, attention_output
+
+    def forward(self, features):
+        transformer_features, _ = self.forward_with_attention_output(features)
+        return transformer_features
 
 
 class CTBlock(nn.Module):
@@ -766,9 +775,12 @@ class CNNTransformerCSAAdaptivePruningClassifier(
         nn.init.zeros_(self.band_gate_head.weight)
         nn.init.constant_(self.band_gate_head.bias, 0.15)
 
-    def predict_band_gates(self, patches):
-        """Predict differentiable per-sample gates from Transformer features."""
-        features = self.input_projection(patches)
+    def _run_transformer_for_gate_prediction(
+        self,
+        features,
+        *,
+        stop_after_attention=False,
+    ):
         batch_norm_states = []
         for module in self.ct_block.transformer_branch.modules():
             if (
@@ -795,7 +807,17 @@ class CNNTransformerCSAAdaptivePruningClassifier(
                 # classification pass, which keeps its dropout behavior intact.
                 module.training = False
         try:
-            transformer_features = self.ct_block.transformer_branch(features)
+            if stop_after_attention:
+                transformer_features = None
+                attention_output = (
+                    self.ct_block.transformer_branch
+                    .forward_attention_output(features)
+                )
+            else:
+                transformer_features = self.ct_block.transformer_branch(
+                    features
+                )
+                attention_output = None
         finally:
             for module, training in dropout_states:
                 module.training = training
@@ -804,6 +826,14 @@ class CNNTransformerCSAAdaptivePruningClassifier(
                 module.track_running_stats = track_running_stats
                 module.running_mean = running_mean
                 module.running_var = running_var
+        return transformer_features, attention_output
+
+    def predict_band_gates(self, patches):
+        """Predict differentiable per-sample gates from Transformer features."""
+        features = self.input_projection(patches)
+        transformer_features, _ = self._run_transformer_for_gate_prediction(
+            features
+        )
         pooled = transformer_features.mean(dim=(2, 3))
         gate_logits = self.band_gate_head(pooled)
         return torch.sigmoid(self.pruning_gate_slope * gate_logits)
@@ -848,6 +878,94 @@ class CNNTransformerCSAAdaptivePruningClassifier(
         keep_mask[pruned_indices] = False
         selected_indices = torch.nonzero(keep_mask, as_tuple=True)[0]
         return selected_indices.cpu(), mean_gates.cpu()
+
+
+class CNNTransformerCSAMHSARawBandPruningClassifier(
+    CNNTransformerCSAAdaptivePruningClassifier
+):
+    """Predict band gates from MHSA context and per-band raw spatial means."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        del self.band_gate_head
+        # Keep one raw descriptor per spectral band; only spatial positions
+        # within each band are averaged, so bands are never mixed here.
+        raw_patch_values = self.input_channels
+        fused_channels = self.feature_channels + raw_patch_values
+        self.band_gate_head = nn.Sequential(
+            nn.Linear(fused_channels, self.feature_channels),
+            nn.GELU(),
+            nn.Linear(self.feature_channels, self.input_channels),
+        )
+        nn.init.zeros_(self.band_gate_head[-1].weight)
+        nn.init.constant_(self.band_gate_head[-1].bias, 0.15)
+
+    def predict_band_gates(self, patches):
+        """Fuse pooled MHSA context with one spatial mean per raw band."""
+        features = self.input_projection(patches)
+        _, attention_output = self._run_transformer_for_gate_prediction(
+            features,
+            stop_after_attention=True,
+        )
+        attention_context = attention_output.mean(dim=1)
+        raw_band_features = patches.mean(dim=(2, 3))
+        fused_features = torch.cat(
+            (attention_context, raw_band_features), dim=1
+        )
+        gate_logits = self.band_gate_head(fused_features)
+        return torch.sigmoid(self.pruning_gate_slope * gate_logits)
+
+
+class CNNTransformerCSAMHSARawBandSTEPruningClassifier(
+    CNNTransformerCSAMHSARawBandPruningClassifier
+):
+    """Raw-band pruning with a global hard mask and straight-through gradients."""
+
+    def __init__(self, *args, ste_warmup_epochs=10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ste_warmup_epochs = int(ste_warmup_epochs)
+        if self.ste_warmup_epochs < 0:
+            raise ValueError("STE warmup epochs cannot be negative")
+        self.register_buffer(
+            "hard_keep_mask",
+            torch.ones(self.input_channels, dtype=torch.bool),
+        )
+        self.register_buffer(
+            "_ste_enabled",
+            torch.tensor(False, dtype=torch.bool),
+        )
+
+    def set_ste_enabled(self, enabled):
+        self._ste_enabled.fill_(bool(enabled))
+
+    @torch.no_grad()
+    def set_global_pruning_mask(self, selected_band_indices):
+        keep_mask = torch.zeros_like(self.hard_keep_mask)
+        selected_band_indices = torch.as_tensor(
+            selected_band_indices,
+            dtype=torch.long,
+            device=keep_mask.device,
+        )
+        keep_mask[selected_band_indices] = True
+        self.hard_keep_mask.copy_(keep_mask)
+
+    def forward(self, patches):
+        if not bool(self._ste_enabled):
+            return super().forward(patches)
+
+        soft_gates = self.predict_band_gates(patches)
+        hard_mask = self.hard_keep_mask.to(
+            device=patches.device,
+            dtype=patches.dtype,
+        ).unsqueeze(0)
+        # Forward uses the same global binary mask for every sample; backward
+        # uses the soft per-sample gates as a straight-through proxy.
+        straight_through_mask = (
+            hard_mask + soft_gates - soft_gates.detach()
+        )
+        self._last_pruning_penalty = 0.0
+        masked_patches = patches * straight_through_mask[:, :, None, None]
+        return CNNTransformerCSAClassifier.forward(self, masked_patches)
 
 
 class FrozenBandPrunedClassifier(nn.Module):
@@ -998,6 +1116,38 @@ def build_model(
             transformer_cnn_normalization=(
                 transformer_cnn_normalization
             ),
+            pruning_gate_slope=pruning_gate_slope,
+            pruning_sparsity_weight=pruning_sparsity_weight,
+            pruning_percentage=pruning_percentage,
+        )
+    if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_PRUNING:
+        return CNNTransformerCSAMHSARawBandPruningClassifier(
+            input_channels=input_channels,
+            feature_channels=feature_channels,
+            num_classes=num_classes,
+            patch_size=patch_size,
+            transformer_heads=transformer_heads,
+            transformer_expansion_factor=transformer_expansion_factor,
+            transformer_dropout=transformer_dropout,
+            transformer_ffn_residual_scale=transformer_ffn_residual_scale,
+            transformer_position_encoding=transformer_position_encoding,
+            transformer_cnn_normalization=transformer_cnn_normalization,
+            pruning_gate_slope=pruning_gate_slope,
+            pruning_sparsity_weight=pruning_sparsity_weight,
+            pruning_percentage=pruning_percentage,
+        )
+    if architecture == ModelArchitecture.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING:
+        return CNNTransformerCSAMHSARawBandSTEPruningClassifier(
+            input_channels=input_channels,
+            feature_channels=feature_channels,
+            num_classes=num_classes,
+            patch_size=patch_size,
+            transformer_heads=transformer_heads,
+            transformer_expansion_factor=transformer_expansion_factor,
+            transformer_dropout=transformer_dropout,
+            transformer_ffn_residual_scale=transformer_ffn_residual_scale,
+            transformer_position_encoding=transformer_position_encoding,
+            transformer_cnn_normalization=transformer_cnn_normalization,
             pruning_gate_slope=pruning_gate_slope,
             pruning_sparsity_weight=pruning_sparsity_weight,
             pruning_percentage=pruning_percentage,
