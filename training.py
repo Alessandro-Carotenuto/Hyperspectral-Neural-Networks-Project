@@ -29,7 +29,14 @@ def build_lr_scheduler(optimizer, scheduling_type, total_epochs):
     raise ValueError(f"Unsupported LR scheduling: {scheduling_type}")
 
 
-def train_one_epoch(model, loader, criterion, optimizer, device):
+def train_one_epoch(
+    model,
+    loader,
+    criterion,
+    optimizer,
+    device,
+    regularization=None,
+):
     """Train for one epoch and return sample-weighted loss and accuracy."""
     model.train()
 
@@ -44,11 +51,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         optimizer.zero_grad(set_to_none=True)
         logits = model(patches)
         loss = criterion(logits, targets)
-        pruning_regularization = getattr(
-            model, "pruning_regularization", None
-        )
-        if pruning_regularization is not None:
-            loss = loss + pruning_regularization(patches)
+        if regularization is not None:
+            loss = loss + regularization(patches)
         loss.backward()
         optimizer.step()
 
@@ -86,6 +90,35 @@ def evaluate(model, loader, criterion, device):
     average_loss = total_loss / total_samples
     accuracy = total_correct / total_samples
     return average_loss, accuracy
+
+
+class AdaptivePruningController:
+    """Handle STE scheduling and compact validation for the STE model."""
+
+    def __init__(self, model):
+        self.model = model
+
+    def before_epoch(self, epoch):
+        self.model.set_ste_enabled(epoch > self.model.ste_warmup_epochs)
+
+    def regularization(self, patches):
+        return self.model.pruning_regularization(patches)
+
+    def prepare_validation(self, train_loader, device):
+        from models import build_compact_pruned_model
+
+        selected_band_indices, mean_band_gates = (
+            self.model.estimate_global_band_mask(train_loader, device)
+        )
+        self.model.set_global_pruning_mask(selected_band_indices)
+        validation_model = build_compact_pruned_model(
+            self.model, selected_band_indices
+        ).to(device)
+        checkpoint_metadata = {
+            "selected_band_indices": selected_band_indices.tolist(),
+            "mean_band_gates": mean_band_gates.tolist(),
+        }
+        return validation_model, checkpoint_metadata
 
 
 def configure_reproducibility(seed):
@@ -311,6 +344,7 @@ def fit_model(
     scheduling_type,
     checkpoint_path,
     checkpoint_metadata,
+    pruning_controller=None,
     weight_decay=0.0,
     log_every=10,
 ):
@@ -335,40 +369,33 @@ def fit_model(
     }
     best_validation_loss = float("inf")
     best_epoch = 0
-    adaptive_pruning = hasattr(model, "estimate_global_band_mask")
-
     for epoch in range(1, epochs + 1):
-        set_ste_enabled = getattr(model, "set_ste_enabled", None)
-        if callable(set_ste_enabled):
-            warmup_epochs = getattr(model, "ste_warmup_epochs", 0)
-            set_ste_enabled(epoch > warmup_epochs)
+        if pruning_controller is not None:
+            pruning_controller.before_epoch(epoch)
         train_loss, train_accuracy = train_one_epoch(
-            model, train_loader, criterion, optimizer, device
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            regularization=(
+                pruning_controller.regularization
+                if pruning_controller is not None
+                else None
+            ),
         )
-        selected_band_indices = None
-        mean_band_gates = None
-        if adaptive_pruning:
-            from models import build_compact_pruned_model
-
-            selected_band_indices, mean_band_gates = (
-                model.estimate_global_band_mask(train_loader, device)
+        pruning_checkpoint_metadata = {}
+        if pruning_controller is not None:
+            validation_model, pruning_checkpoint_metadata = (
+                pruning_controller.prepare_validation(train_loader, device)
             )
-            set_global_pruning_mask = getattr(
-                model, "set_global_pruning_mask", None
-            )
-            if callable(set_global_pruning_mask):
-                set_global_pruning_mask(selected_band_indices)
-            validation_model = build_compact_pruned_model(
-                model, selected_band_indices
-            ).to(device)
-            validation_loss, validation_accuracy = evaluate(
-                validation_model, validation_loader, criterion, device
-            )
-            del validation_model
         else:
-            validation_loss, validation_accuracy = evaluate(
-                model, validation_loader, criterion, device
-            )
+            validation_model = model
+        validation_loss, validation_accuracy = evaluate(
+            validation_model, validation_loader, criterion, device
+        )
+        if validation_model is not model:
+            del validation_model
         current_learning_rate = optimizer.param_groups[0]["lr"]
 
         history["train_loss"].append(train_loss)
@@ -399,16 +426,7 @@ def fit_model(
                     "validation_loss": validation_loss,
                     "validation_accuracy": validation_accuracy,
                     "history": history,
-                    **(
-                        {
-                            "selected_band_indices": (
-                                selected_band_indices.tolist()
-                            ),
-                            "mean_band_gates": mean_band_gates.tolist(),
-                        }
-                        if adaptive_pruning
-                        else {}
-                    ),
+                    **pruning_checkpoint_metadata,
                     **checkpoint_metadata,
                 },
                 checkpoint_path,
