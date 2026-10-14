@@ -369,6 +369,10 @@ def fit_model(
     }
     best_validation_loss = float("inf")
     best_epoch = 0
+    regularization = None
+    if pruning_controller is not None:
+        regularization = pruning_controller.regularization
+
     for epoch in range(1, epochs + 1):
         if pruning_controller is not None:
             pruning_controller.before_epoch(epoch)
@@ -378,11 +382,7 @@ def fit_model(
             criterion,
             optimizer,
             device,
-            regularization=(
-                pruning_controller.regularization
-                if pruning_controller is not None
-                else None
-            ),
+            regularization=regularization,
         )
         pruning_checkpoint_metadata = {}
         if pruning_controller is not None:
@@ -413,24 +413,22 @@ def fit_model(
         if validation_loss < best_validation_loss:
             best_validation_loss = validation_loss
             best_epoch = epoch
-            torch.save(
-                {
-                    "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "scheduler_state_dict": (
-                        scheduler.state_dict()
-                        if scheduler is not None
-                        else None
-                    ),
-                    "validation_loss": validation_loss,
-                    "validation_accuracy": validation_accuracy,
-                    "history": history,
-                    **pruning_checkpoint_metadata,
-                    **checkpoint_metadata,
-                },
-                checkpoint_path,
-            )
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": (
+                    scheduler.state_dict()
+                    if scheduler is not None
+                    else None
+                ),
+                "validation_loss": validation_loss,
+                "validation_accuracy": validation_accuracy,
+                "history": history,
+                **pruning_checkpoint_metadata,
+                **checkpoint_metadata,
+            }
+            torch.save(checkpoint, checkpoint_path)
 
         if epoch == 1 or epoch % log_every == 0 or epoch == epochs:
             print(
