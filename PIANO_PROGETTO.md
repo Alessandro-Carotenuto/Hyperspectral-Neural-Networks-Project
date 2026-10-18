@@ -243,7 +243,7 @@ Completato nel notebook e nei moduli Python:
 - ramo CNN multiscala del CT block con quattro branch paralleli;
 - concatenazione, convoluzione `1x1` e residual connection;
 - global average pooling e classificatore a `9` logits;
-- forward/backward sanity check e overfitting test su un piccolo batch;
+- forward/backward sanity check;
 - training con Adam, checkpoint migliore e tre strategie di learning rate;
 - valutazione con OA, AA, Kappa, accuracy per classe e confusion matrix;
 - confusion matrix normalizzata e classification map completa;
@@ -369,8 +369,8 @@ Se il tempo è limitato, fermarsi qui. Consolidare codice, notebook, risultati e
 
 ### Stato: completato
 
-Sono disponibili il blocco `ChannelSpatialAttentionBlock` e le quattro
-architetture selezionabili `CNN_ONLY`, `CNN_CSA`, `CNN_TRANSFORMER` e
+Sono disponibili il blocco `ChannelSpatialAttentionBlock` e le tre
+architetture base selezionabili `CNN_CSA`, `CNN_TRANSFORMER` e
 `CNN_TRANSFORMER_CSA`. I controlli sintetici di shape, forward e backward
 e gli smoke training delle due nuove architetture sono superati. La variante
 `outer_residual`, che rimuove il residual interno dal ramo CNN e conserva il
@@ -527,7 +527,7 @@ Confrontare split casuale del paper con split spaziale a blocchi. Presentare lo 
 
 ### Obiettivo e implementazione attuale
 
-Il channel attention CSA pesa feature interne, non direttamente le 103 bande originali. L'unica variante di pruning supportata è `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING`, implementata da `CNNTransformerCSAMHSARawBandSTEPruningClassifier`. `predict_band_gates` combina il contesto prodotto dall'attenzione MHSA con un descrittore raw per banda (la media spaziale); non introduce convoluzioni spettrali né un altro Transformer. Dopo un warm-up di 10 epoche, il forward usa una maschera binaria globale e lo STE usa i gate soft per propagare il gradiente. La previsione dei gate disabilita il dropout del ramo Transformer e non aggiorna le statistiche persistenti di BatchNorm. Le varianti non-STE descritte nei risultati precedenti sono esperimenti storici e non sono più opzioni dell'implementazione.
+Il channel attention CSA pesa feature interne, non direttamente le 103 bande originali. L'unica variante di pruning supportata è `CNN_TRANSFORMER_CSA_BAND_PRUNING`, implementata da `CNNTransformerCSABandPruningClassifier`. `predict_band_gates` combina il contesto prodotto dall'attenzione MHSA con un descrittore raw per banda (la media spaziale); non introduce convoluzioni spettrali né un altro Transformer. Dopo un warm-up di 10 epoche, il forward usa una maschera binaria globale e lo STE usa i gate soft per propagare il gradiente. La previsione dei gate disabilita il dropout del ramo Transformer e non aggiorna le statistiche persistenti di BatchNorm. Le varianti non-STE descritte nei risultati precedenti sono esperimenti storici e non sono più opzioni dell'implementazione.
 
 `estimate_global_band_mask` calcola la media dei gate esclusivamente sui campioni del training loader e rimuove una quota fissa delle bande con punteggio medio più basso. La selezione risultante è globale al dataset/run, non una maschera diversa a ogni inferenza. Validation e test usano la maschera binaria: `FrozenBandPrunedClassifier` seleziona gli indici con `index_select`, mentre `build_compact_pruned_model` costruisce una CTA-Net il cui primo layer riceve solo i canali mantenuti. Le metriche di test sono quindi riferite al modello compatto e non ai gate soft.
 

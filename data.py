@@ -28,11 +28,6 @@ def build_forbidden_test_center_mask(image_shape, train_coordinates, radius):
     return forbidden_mask
 
 
-def coordinate_set(coordinates):
-    """Convert an ``(N, 2)`` coordinate array to hashable pairs."""
-    return {tuple(coordinate) for coordinate in coordinates.tolist()}
-
-
 def build_split_table(coordinates_by_label, labeled_class_ids):
     """Build a ``row, column, label`` table ordered by class."""
     rows = []
@@ -91,7 +86,9 @@ def normalize_per_band(cube, normalization):
     normalization = InputNormalization(normalization)
     if normalization == InputNormalization.MIN_MAX:
         return normalize_per_band_min_max(cube)[0]
-    return normalize_per_band_z_score(cube)[0]
+    if normalization == InputNormalization.Z_SCORE:
+        return normalize_per_band_z_score(cube)[0]
+    raise ValueError(f"Unsupported input normalization: {normalization}")
 
 
 def reflect_pad_spatially(cube, patch_radius):
@@ -447,184 +444,6 @@ def split_counts_by_class(split_tables, labeled_class_ids):
             split_name: int(np.count_nonzero(table[:, 2] == label))
             for split_name, table in split_tables.items()
         }
-    return counts
-
-
-def verify_few_shot_split(
-    split_tables,
-    ground_truth,
-    labeled_class_ids,
-    *,
-    train_samples_per_class,
-    validation_samples_per_class,
-    split_type,
-    patch_radius,
-    class_names=None,
-):
-    """Verify coverage, labels, counts and the selected overlap policy."""
-    coordinates_by_class = collect_coordinates_by_class(
-        ground_truth, labeled_class_ids
-    )
-    all_split_sets = {
-        split_name: coordinate_set(table[:, :2])
-        for split_name, table in split_tables.items()
-    }
-
-    split_names = tuple(split_tables)
-    for index, left_name in enumerate(split_names):
-        for right_name in split_names[index + 1:]:
-            assert all_split_sets[left_name].isdisjoint(
-                all_split_sets[right_name]
-            )
-
-    total_labeled_coordinates = sum(
-        len(coordinates) for coordinates in coordinates_by_class.values()
-    )
-    assert sum(len(table) for table in split_tables.values()) == (
-        total_labeled_coordinates
-    )
-    combined_coordinates = set().union(*all_split_sets.values())
-    assert len(combined_coordinates) == total_labeled_coordinates
-    assert len(split_tables[SplitName.TRAIN.value]) == (
-        len(labeled_class_ids) * train_samples_per_class
-    )
-    assert len(split_tables[SplitName.VALIDATION.value]) == (
-        len(labeled_class_ids) * validation_samples_per_class
-    )
-
-    counts = split_counts_by_class(split_tables, labeled_class_ids)
-    for label in labeled_class_ids:
-        class_name = (
-            class_names[label] if class_names is not None else str(label)
-        )
-        if counts[label][SplitName.TEST.value] == 0:
-            raise ValueError(
-                f"{split_type.value} leaves no test samples for "
-                f"class {label} ({class_name}). Choose another seed "
-                "or a less restrictive split."
-            )
-        assert (
-            counts[label][SplitName.TRAIN.value]
-            == train_samples_per_class
-        )
-        assert (
-            counts[label][SplitName.VALIDATION.value]
-            == validation_samples_per_class
-        )
-
-        original_coordinates = coordinate_set(
-            coordinates_by_class[label]
-        )
-        class_split_coordinates = set()
-        for table in split_tables.values():
-            class_rows = table[table[:, 2] == label, :2]
-            class_split_coordinates.update(coordinate_set(class_rows))
-        assert class_split_coordinates == original_coordinates
-
-    train_coordinates = split_tables[SplitName.TRAIN.value][:, :2]
-    if split_type == DataSplitType.RANDOM:
-        forbidden_radius = None
-    elif split_type == DataSplitType.RANDOM_NO_CENTER_OVERLAP:
-        forbidden_radius = patch_radius
-    elif split_type == DataSplitType.RANDOM_NO_OVERLAP:
-        forbidden_radius = 2 * patch_radius
-    else:
-        raise ValueError(f"Unsupported data split: {split_type}")
-
-    if forbidden_radius is not None:
-        forbidden_mask = build_forbidden_test_center_mask(
-            ground_truth.shape,
-            train_coordinates,
-            forbidden_radius,
-        )
-        test_coordinates = split_tables[SplitName.TEST.value][:, :2]
-        excluded_coordinates = split_tables[
-            SplitName.EXCLUDED.value
-        ][:, :2]
-        assert not forbidden_mask[
-            test_coordinates[:, 0], test_coordinates[:, 1]
-        ].any()
-        assert forbidden_mask[
-            excluded_coordinates[:, 0], excluded_coordinates[:, 1]
-        ].all()
-    else:
-        assert len(split_tables[SplitName.EXCLUDED.value]) == 0
-
-    for table in split_tables.values():
-        rows = table[:, 0]
-        columns = table[:, 1]
-        labels = table[:, 2]
-        assert np.array_equal(ground_truth[rows, columns], labels)
-
-    return counts
-
-
-def split_file_suffix(split_type):
-    """Return the filename suffix used by one split policy."""
-    return "" if split_type == DataSplitType.RANDOM else f"_{split_type.value}"
-
-
-def save_and_verify_split(
-    split_tables,
-    ground_truth,
-    split_directory,
-    split_type,
-):
-    """Save split CSV files, reload them and verify exact equality."""
-    split_directory.mkdir(parents=True, exist_ok=True)
-    suffix = split_file_suffix(split_type)
-    loaded_split_tables = {}
-
-    for split_name, expected_table in split_tables.items():
-        path = split_directory / f"{split_name}{suffix}.csv"
-        np.savetxt(
-            path,
-            expected_table,
-            fmt="%d",
-            delimiter=",",
-            header="row,column,label",
-            comments="",
-        )
-        print(f"Saved {len(expected_table)} samples to {path}")
-
-        if len(expected_table) == 0:
-            loaded_table = np.empty((0, 3), dtype=np.int64)
-        else:
-            loaded_table = np.atleast_2d(
-                np.loadtxt(
-                    path,
-                    delimiter=",",
-                    skiprows=1,
-                    dtype=np.int64,
-                )
-            )
-        assert loaded_table.shape == expected_table.shape
-        assert np.array_equal(loaded_table, expected_table)
-
-        rows = loaded_table[:, 0]
-        columns = loaded_table[:, 1]
-        labels = loaded_table[:, 2]
-        assert np.array_equal(ground_truth[rows, columns], labels)
-        loaded_split_tables[split_name] = loaded_table
-        print(f"Verified {path.name}: {len(loaded_table)} samples")
-
-    return loaded_split_tables
-
-
-def count_padding_requirements(split_tables, image_shape, patch_radius):
-    """Count samples whose patches touch an image border."""
-    image_height, image_width = image_shape
-    counts = {}
-    for split_name, split_table in split_tables.items():
-        rows = split_table[:, 0]
-        columns = split_table[:, 1]
-        requires_padding = (
-            (rows < patch_radius)
-            | (rows >= image_height - patch_radius)
-            | (columns < patch_radius)
-            | (columns >= image_width - patch_radius)
-        )
-        counts[split_name] = int(np.count_nonzero(requires_padding))
     return counts
 
 

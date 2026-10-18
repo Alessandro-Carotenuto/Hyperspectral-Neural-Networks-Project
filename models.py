@@ -571,27 +571,6 @@ class ChannelSpatialAttentionBlock(nn.Module):
         return self.spatial_attention(channel_refined_features)
 
 
-class CNNOnlyBaseline(nn.Module):
-    """CNN-only baseline derived from the CNN branch of the CT block."""
-
-    def __init__(self, input_channels, feature_channels, num_classes):
-        super().__init__()
-
-        self.input_projection = nn.Conv2d(
-            input_channels, feature_channels, kernel_size=1
-        )
-        self.cnn_block = MultiscaleCNNBlock(feature_channels)
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.classifier = nn.Linear(feature_channels, num_classes)
-
-    def forward(self, patches):
-        features = self.input_projection(patches)
-        cnn_features = features + self.cnn_block(features)
-        pooled_features = self.global_pool(cnn_features)
-        pooled_features = pooled_features.flatten(start_dim=1)
-        return self.classifier(pooled_features)
-
-
 class CNNCSAClassifier(nn.Module):
     """CNN classifier followed by channel-spatial attention."""
 
@@ -850,7 +829,7 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
         return selected_indices.cpu(), mean_gates.cpu()
 
 
-class CNNTransformerCSAMHSARawBandSTEPruningClassifier(
+class CNNTransformerCSABandPruningClassifier(
     _BaseBandPruningClassifier
 ):
     """The supported adaptive pruning model: MHSA/raw-band scoring with STE."""
@@ -1039,8 +1018,6 @@ def build_model(
         "pruning_percentage": pruning_percentage,
     }
 
-    if architecture == ModelArchitecture.CNN_ONLY:
-        return CNNOnlyBaseline(**model_kwargs)
     if architecture == ModelArchitecture.CNN_CSA:
         return CNNCSAClassifier(**model_kwargs)
     if architecture == ModelArchitecture.CNN_TRANSFORMER:
@@ -1049,9 +1026,9 @@ def build_model(
         return CNNTransformerCSAClassifier(**transformer_kwargs)
     if (
         architecture
-        == ModelArchitecture.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING
+        == ModelArchitecture.CNN_TRANSFORMER_CSA_BAND_PRUNING
     ):
-        return CNNTransformerCSAMHSARawBandSTEPruningClassifier(
+        return CNNTransformerCSABandPruningClassifier(
             **transformer_kwargs,
             **pruning_kwargs,
         )

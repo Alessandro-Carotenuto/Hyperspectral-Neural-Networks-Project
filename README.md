@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Training-Kaggle%20GPU-20BEFF?logo=kaggle&logoColor=white" alt="Kaggle GPU" height="28" />
 </p>
 
-**Pixel-wise classification of hyperspectral imagery with only 10 labeled training pixels per class. The project builds CNN, CNN-Transformer, channel-spatial attention, and sample amplification components, then evaluates the complete CTA-Net pipeline on Pavia University.**
+**Few-shot pixel-wise classification of Pavia University HSI with a CNN-Transformer, channel-spatial attention, and sample amplification. The best recorded 8-head configuration achieves 88.42 ± 2.67% OA, 90.07 ± 1.28% AA, and 84.96 ± 3.21% Kappa across 10 runs on a fixed split, with about 30 minutes of training. The project also explores attention-guided spectral-band pruning with STE.**
 
 *Alessandro Carotenuto*
 
@@ -24,6 +24,7 @@ The paper proposes CTA-Net for few-sample hyperspectral image classification. Th
 
 - [How it works](#how-it-works)
 - [Typical results](#typical-results)
+- [Ablation highlights](#ablation-highlights)
 - [Architecture](#architecture)
 - [Training pipeline](#training-pipeline)
 - [Project structure](#project-structure)
@@ -62,16 +63,40 @@ The main experiment follows the Pavia University few-shot setup: 10 training pix
 
 ## Typical results
 
-The current ten-run experiment holds the data split fixed at seed `42` and varies the training seed. It uses 10 training samples and 5 validation samples per class, `15 x 15` patches, 128 feature channels, 150 epochs, Adam with learning rate `0.00008`, and zero weight decay.
+Results are mean ± sample standard deviation over 10 training seeds on the fixed split `42` (10 training and 5 validation samples per class). The baseline uses `15 x 15` patches, 128 feature channels, 150 epochs, Adam with learning rate `0.00008`, and zero weight decay.
 
 | Model | OA | AA | Kappa |
 |-------|---:|---:|------:|
-| CT + CSA, no sample amplification | 84.06 ± 2.28% | 88.88 ± 1.03% | 79.76 ± 2.59% |
-| CTA-Net, with sample amplification | **85.47 ± 3.55%** | **88.88 ± 2.23%** | **81.37 ± 4.19%** |
+| CT + CSA, no sample amplification (4 heads) | 84.10 ± 4.06% | 88.03 ± 2.13% | 79.68 ± 4.77% |
+| CTA-Net, with sample amplification (4 heads) | 85.55 ± 4.36% | 89.00 ± 2.17% | 81.48 ± 5.23% |
+| CTA-Net, with sample amplification (8 heads) | **88.42 ± 2.67%** | **90.07 ± 1.28%** | **84.96 ± 3.21%** |
 
-The measured sample amplification gain is `+1.41` percentage points in OA and `+1.61` in Kappa. The paper reports a `+1.23` point OA gain for its corresponding ablation on Pavia University. The effect size is similar, although the absolute accuracy remains lower. These results are from repeated training seeds on one fixed split, not from ten independently sampled data splits.
+At 4 heads, sample amplification improves OA by `1.45` points and Kappa by `1.80` points. The 8-head configuration improves the observed OA by `2.87` points over the 4-head CTA-Net baseline. These are descriptive differences on one fixed split, not significance tests across independent data splits.
+
+## Ablation highlights
+
+The 8-head configuration is the strongest single-factor result for OA and Kappa in the recorded baseline ablations. Other changes did not improve all metrics at once:
+
+| Configuration | Split | OA | AA | Kappa |
+|---|---:|---:|---:|---:|
+| 8 heads + Z-score input | 42 | 87.56 ± 2.79% | **90.68 ± 1.24%** | 83.97 ± 3.46% |
+| Combined settings: 8 heads, 64 channels, patch 11, Z-score, LayerNorm, cosine schedule, and other changes | 42 | 85.09 ± 1.57% | 87.71 ± 1.23% | 80.73 ± 1.94% |
+| Same combined settings | 1 | 78.51 ± 5.17% | 86.61 ± 2.12% | 73.12 ± 5.90% |
+
+Combining individually tested settings did not outperform the 8-head baseline and produced different results across the two splits. The full tables and per-class results are in [ablations.md](ablations.md).
 
 ## Architecture
+
+The classifier receives patches as `bands × height × width` tensors. A `1 × 1` input projection maps spectral bands to feature channels; the selected classifier then processes those spatial features.
+
+| Configured variant | Components |
+|---|---|
+| `CNN_CSA` | Multiscale CNN, channel-spatial attention, and classifier |
+| `CNN_TRANSFORMER` | Parallel CNN and Transformer branches, then classifier |
+| `CNN_TRANSFORMER_CSA` | CNN-Transformer block, channel-spatial attention, and classifier; the complete CTA-Net classifier |
+| `CNN_TRANSFORMER_CSA_BAND_PRUNING` | CTA-Net classifier with the supported adaptive spectral-band pruning head |
+
+The classifier variants reuse the same implementation blocks. Sample amplification is a training-data option applied outside the model; it is not a separate neural-network layer.
 
 ### CNN branch
 
@@ -86,7 +111,7 @@ Branch outputs are concatenated and projected with a `1 x 1` convolution.
 
 ### Transformer branch
 
-The Transformer branch follows a Conformer-style block with two feed-forward modules, multi-head self-attention with relative position information, and an internal convolution module. The CNN and Transformer branches process the same projected feature map in parallel. Their outputs are fused and added to the CT block input through an outer residual connection.
+The Transformer branch follows a Conformer-style block with two feed-forward modules, multi-head self-attention with relative position information, and an internal convolution module. Attention operates over the spatial patch tokens. The CNN and Transformer branches process the same projected feature map in parallel. Their outputs are fused and added to the CT block input through an outer residual connection.
 
 ### Channel-spatial attention
 
@@ -94,11 +119,19 @@ The attention block applies channel attention followed by spatial attention. Spa
 
 ### Adaptive spectral pruning (experimental)
 
-The only supported adaptive pruning architecture is `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING`. It uses the existing Transformer/MHSA branch and combines its attention context with one raw spatial-mean descriptor per band; there is no convolution across bands and no additional Transformer. After a 10-epoch warm-up, training uses a global binary band mask in the forward pass and a soft gradient estimate (STE). Each pruning budget requires its own training run. Earlier non-STE variants are retained only in the historical experiment results in `ablations.md`.
+The only supported adaptive pruning architecture is `CNN_TRANSFORMER_CSA_BAND_PRUNING`. It combines pooled output from the existing MHSA branch with one spatial-mean descriptor per input band to score bands. It adds no Transformer and performs no convolution across bands. After a 10-epoch warm-up, STE training uses a global binary mask in the forward pass and soft per-sample gates for the backward gradient. Each pruning budget requires its own training run.
 
-For evaluation and deployment, the selected subset is fixed across patches. The normalized image cube is filtered once before patch extraction, and a compact classifier is built with its first projection restricted to the retained bands. The pruning head is therefore not part of compact-model inference. `PRUNING_FINETUNE_EPOCHS` controls optional compact-classifier training on the training split (default `30`; set to `0` to skip it). Without this fine-tuning, the compact model receives copied classifier weights and a sliced first-projection kernel learned with the original 103-band input, so its accuracy is not directly comparable to a fine-tuned compact model.
+The global bottom-k mask is selected from mean gate scores on the training loader only. For inference, the selected bands are fixed across patches: the normalized image cube is filtered once, and a compact CTA-Net is created with the input projection narrowed to the retained bands. The pruning head is not part of compact-model inference. `PRUNING_FINETUNE_EPOCHS` controls optional fine-tuning of that compact classifier on training data (default `30`; use `0` to skip it). Results with and without compact-model fine-tuning are different protocols.
 
-Pavia University accuracy and CPU inference measurements are recorded in `ablations.md`. The current 70/80/90% sweep uses one fixed train/validation split and five training seeds; its single-thread compact-model timing differences are modest and noisy, so it does not establish a robust inference speedup. The 99% STE run is a one-seed diagnostic and also showed nearly unchanged latency. These results do not include test-set metrics or establish generalization to other sensors or hardware.
+The five-seed STE sweep uses one fixed train/validation split; the test split was not used. Timing is single-thread CPU at batch size 32, after filtering the normalized cube once:
+
+| Bands removed | Bands kept | Compact validation OA after fine-tuning | Full → compact latency | Ratio |
+|---:|---:|---:|---:|---:|
+| 70% | 31 | 82.7 ± 3.3% | 2.362 → 2.530 ms/sample | 0.93× |
+| 80% | 21 | 83.6 ± 2.0% | 2.210 → 2.126 ms/sample | 1.04× |
+| 90% | 10 | 78.7 ± 6.6% | 2.192 → 2.119 ms/sample | 1.03× |
+
+The measured gains are small and noisy; these experiments do not establish a robust inference speedup. A separate one-seed 99% pruning run retained one band, reached 46.7% validation OA after fine-tuning, and measured 1.01× batch-32 speedup. Detailed protocols and historical results are in [ablations.md](ablations.md).
 
 ### Sample amplification
 
@@ -124,8 +157,8 @@ The `CTA_NET` mode materializes four training pools for every run: original patc
 ├── plotting.py                          # Result and training visualizations
 ├── training.py                          # Training loop, seeds, checkpoints
 ├── utils.py                             # Enumerations and shared configuration types
-├── notebooks/
-│   └── hsi_classification.ipynb          # Main experiment and analysis notebook
+├── ablations.md                          # Detailed accuracy, pruning, and timing results
+├── hsi_classification.ipynb              # Main experiment and analysis notebook
 ├── docs/
 │   └── research/                         # Method and replication notes
 └── tests/                                # Focused data and configuration tests
@@ -146,6 +179,8 @@ The notebook keeps the experiment configuration together near its beginning. Imp
 | `NUM_SEEDS` | `10` | Runs in multi-training-seed mode |
 | `TRAINING_SEEDS_FIXED` | `[]` | Paste the printed seed list here when using `MULTI_FIXED_TRAIN_SEED` |
 | `ARCHITECTURE` | `CNN_TRANSFORMER_CSA` | Select CNN, CT, CSA, or CT + CSA |
+| `TRANSFORMER_HEADS` | `4` | Notebook default; the best recorded baseline ablation uses `8` heads |
+| `TRANSFORMER_FFN_EXPANSION` | `4` | Feed-forward hidden-width multiplier |
 | `SAMPLE_AMPLIFICATION_MODE` | `CTA_NET` | Disable SA or use the CTA-Net augmentation |
 | `INPUT_NORMALIZATION` | `MIN_MAX` | Per-band min-max or z-score normalization |
 | `PRUNING_GATE_SLOPE` | `20.0` | Fixed sigmoid slope for adaptive spectral gates |
@@ -158,7 +193,7 @@ The SA values that are not specified by the paper are documented in [the sample 
 
 ## Usage
 
-Open `notebooks/hsi_classification.ipynb`, configure the dataset paths and experiment settings, then run the cells in order. Set `RUN_FULL_TRAINING = False` for a short smoke run. Set it to `True` for the configured 150-epoch experiment.
+Open `hsi_classification.ipynb`, configure the dataset paths and experiment settings, then run the cells in order. Training always uses the configured number of epochs in `EPOCHS`.
 
 For each full run, the notebook writes checkpoints under `outputs/checkpoints/` and evaluation reports under `outputs/results/`. Each report includes the configuration, split and training seeds, sample amplification metadata, validation-selected checkpoint, and test metrics.
 

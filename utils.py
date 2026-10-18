@@ -50,11 +50,6 @@ class DataSplitType(StrEnum):
     RANDOM_NO_OVERLAP = "random_no_overlap"
 
 
-class RunMode(StrEnum):
-    SMOKE = "smoke"
-    FULL = "full"
-
-
 class TrainingSeedMode(StrEnum):
     ONE_FIXED_TRAIN_SEED = "one_fixed_train_seed"
     MULTI_FIXED_TRAIN_SEED = "multi_fixed_train_seed"
@@ -69,7 +64,6 @@ class SampleAmplificationMode(StrEnum):
 class LRSchedulingType(StrEnum):
     FIXED = "fixed"
     COSINEANNEALING = "cosine_annealing"
-    REDUCELRONPLATEAU = "reduce_lr_on_plateau"
 
 
 class TransformerPositionEncoding(StrEnum):
@@ -88,23 +82,21 @@ class InputNormalization(StrEnum):
 
 
 class ModelArchitecture(StrEnum):
-    CNN_ONLY = "cnn_only"
     CNN_CSA = "cnn_csa"
     CNN_TRANSFORMER = "cnn_transformer"
     CNN_TRANSFORMER_CSA = "cnn_transformer_csa"
-    CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING = (
-        "cnn_transformer_csa_mhsa_raw_band_ste_pruning"
+    CNN_TRANSFORMER_CSA_BAND_PRUNING = (
+        "cnn_transformer_csa_band_pruning"
     )
 
     @property
     def display_name(self):
         return {
-            self.CNN_ONLY: "CNN-Only",
             self.CNN_CSA: "CNN-CSA",
             self.CNN_TRANSFORMER: "CNN-Transformer",
             self.CNN_TRANSFORMER_CSA: "CNN-Transformer-CSA",
-            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING:
-                "CNN-Transformer-CSA-MHSA-Raw-Band-STE-Pruning",
+            self.CNN_TRANSFORMER_CSA_BAND_PRUNING:
+                "CNN-Transformer-CSA-Band-Pruning",
         }[self]
 
     @property
@@ -112,7 +104,7 @@ class ModelArchitecture(StrEnum):
         return self in {
             self.CNN_TRANSFORMER,
             self.CNN_TRANSFORMER_CSA,
-            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING,
+            self.CNN_TRANSFORMER_CSA_BAND_PRUNING,
         }
 
     @property
@@ -120,11 +112,11 @@ class ModelArchitecture(StrEnum):
         return self in {
             self.CNN_CSA,
             self.CNN_TRANSFORMER_CSA,
-            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING,
+            self.CNN_TRANSFORMER_CSA_BAND_PRUNING,
         }
 
     @property
     def uses_adaptive_pruning(self):
         return self in {
-            self.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING,
+            self.CNN_TRANSFORMER_CSA_BAND_PRUNING,
         }

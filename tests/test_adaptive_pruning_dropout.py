@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from models import (
-    CNNTransformerCSAMHSARawBandSTEPruningClassifier,
+    CNNTransformerCSABandPruningClassifier,
     CNNTransformerCSAClassifier,
 )
 
@@ -12,7 +12,7 @@ from models import (
 class AdaptivePruningDropoutTests(unittest.TestCase):
     def setUp(self):
         torch.manual_seed(17)
-        self.model = CNNTransformerCSAMHSARawBandSTEPruningClassifier(
+        self.model = CNNTransformerCSABandPruningClassifier(
             input_channels=6,
             feature_channels=8,
             num_classes=3,
@@ -154,7 +154,7 @@ class AdaptivePruningDropoutTests(unittest.TestCase):
         self.assertTrue(torch.allclose(mean_gates, gate_values))
 
     def test_default_five_percent_prunes_five_of_103_bands(self):
-        model = CNNTransformerCSAMHSARawBandSTEPruningClassifier(
+        model = CNNTransformerCSABandPruningClassifier(
             input_channels=103,
             feature_channels=8,
             num_classes=3,

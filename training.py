@@ -22,10 +22,6 @@ def build_lr_scheduler(optimizer, scheduling_type, total_epochs):
         return torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=total_epochs
         )
-    if scheduling_type == LRSchedulingType.REDUCELRONPLATEAU:
-        return torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", patience=2
-        )
     raise ValueError(f"Unsupported LR scheduling: {scheduling_type}")
 
 
@@ -275,64 +271,6 @@ def build_checkpoint_path(
     return checkpoint_directory / filename
 
 
-def run_small_batch_overfit_check(
-    model,
-    patches,
-    targets,
-    *,
-    learning_rate,
-    min_steps,
-    max_steps,
-    target_loss,
-):
-    """Verify that a model can memorize one deliberately tiny batch."""
-    model.train()
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=learning_rate
-    )
-    initial_loss = None
-
-    for step in range(1, max_steps + 1):
-        optimizer.zero_grad()
-        logits = model(patches)
-        loss = criterion(logits, targets)
-
-        if initial_loss is None:
-            initial_loss = loss.item()
-
-        loss.backward()
-        optimizer.step()
-
-        predictions = logits.argmax(dim=1)
-        accuracy = (predictions == targets).float().mean().item()
-        if (
-            step >= min_steps
-            and accuracy == 1.0
-            and loss.item() < target_loss
-        ):
-            break
-
-    model.eval()
-    with torch.no_grad():
-        final_logits = model(patches)
-        final_loss = criterion(final_logits, targets).item()
-        final_predictions = final_logits.argmax(dim=1)
-        final_accuracy = (
-            (final_predictions == targets).float().mean().item()
-        )
-
-    assert final_loss < initial_loss
-    assert final_loss < target_loss
-    assert final_accuracy == 1.0
-    return {
-        "steps": step,
-        "initial_loss": initial_loss,
-        "final_loss": final_loss,
-        "final_accuracy": final_accuracy,
-    }
-
-
 def fit_model(
     model,
     train_loader,
@@ -405,10 +343,7 @@ def fit_model(
         history["learning_rate"].append(current_learning_rate)
 
         if scheduler is not None:
-            if scheduling_type == LRSchedulingType.REDUCELRONPLATEAU:
-                scheduler.step(validation_loss)
-            else:
-                scheduler.step()
+            scheduler.step()
 
         if validation_loss < best_validation_loss:
             best_validation_loss = validation_loss

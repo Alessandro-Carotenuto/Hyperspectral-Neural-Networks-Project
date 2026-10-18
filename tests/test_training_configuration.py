@@ -35,7 +35,7 @@ class TrainingConfigurationTests(unittest.TestCase):
     def test_ste_pruning_percentage_is_part_of_checkpoint_identity(self):
         common = {
             "architecture": (
-                ModelArchitecture.CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING
+                ModelArchitecture.CNN_TRANSFORMER_CSA_BAND_PRUNING
             ),
             "transformer_heads": 4,
             "transformer_expansion_factor": 4,

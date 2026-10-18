@@ -443,7 +443,7 @@ Entrambi i run usano la pipeline completa, split 42, gli stessi 10 training seed
 
 ## Adaptive spectral pruning — risultati storici e variante STE supportata
 
-Le tabelle legacy riportano esperimenti delle precedenti varianti non-STE; restano come confronto storico, ma tali architetture non sono più selezionabili nel codice. L'unica variante di pruning supportata è `CNN_TRANSFORMER_CSA_MHSA_RAW_BAND_STE_PRUNING`.
+Le tabelle legacy riportano esperimenti delle precedenti varianti non-STE; restano come confronto storico, ma tali architetture non sono più selezionabili nel codice. L'unica variante di pruning supportata è `CNN_TRANSFORMER_CSA_BAND_PRUNING`.
 
 Report Kaggle forniti dall'utente: split fisso `42`, 10 training seed della lista `TRAINING_SEEDS_FIXED`. I valori sono medie ± deviazione standard campionaria tra training seed condizionati allo stesso split; non rappresentano 10 split indipendenti. Per il bottom-k, il 5% corrisponde a 5 bande rimosse (98 mantenute) e il 20% a 21 bande rimosse (82 mantenute). I risultati sotto differiscono per percentuale di pruning, numero di heads e fine-tuning del modello compatto.
 
