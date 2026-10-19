@@ -8,7 +8,7 @@
   <img src="https://img.shields.io/badge/Training-Kaggle%20GPU-20BEFF?logo=kaggle&logoColor=white" alt="Kaggle GPU" height="28" />
 </p>
 
-**Few-shot pixel-wise classification of Pavia University HSI with a CNN-Transformer, channel-spatial attention, and sample amplification. The best recorded 8-head configuration achieves 88.42 ± 2.67% OA, 90.07 ± 1.28% AA, and 84.96 ± 3.21% Kappa across 10 runs on a fixed split, with about 30 minutes of training. The project also explores attention-guided spectral-band pruning with STE.**
+**Few-shot pixel classification on Pavia University with CTA-Net. The notebook's current configuration trains the adaptive pruning model for 150 epochs, fine-tunes its compact model for 30 epochs, and compares the two on five fixed training seeds. The best recorded non-pruned ablation (8 heads) achieved 88.42 ± 2.67% OA, 90.07 ± 1.28% AA, and 84.96 ± 3.21% Kappa on split 42.**
 
 *Alessandro Carotenuto*
 
@@ -63,7 +63,7 @@ The main experiment follows the Pavia University few-shot setup: 10 training pix
 
 ## Typical results
 
-Results are mean ± sample standard deviation over 10 training seeds on the fixed split `42` (10 training and 5 validation samples per class). The baseline uses `15 x 15` patches, 128 feature channels, 150 epochs, Adam with learning rate `0.00008`, and zero weight decay.
+These are recorded non-pruned ablations, summarized as mean ± sample standard deviation over 10 training seeds on split `42` (10 training and 5 validation samples per class). The reference uses `15 x 15` patches, 128 feature channels, 150 epochs, Adam at `0.00008`, and zero weight decay. The notebook default is now the pruning architecture; its settings are listed below.
 
 | Model | OA | AA | Kappa |
 |-------|---:|---:|------:|
@@ -83,7 +83,7 @@ The 8-head configuration is the strongest single-factor result for OA and Kappa 
 | Combined settings: 8 heads, 64 channels, patch 11, Z-score, LayerNorm, cosine schedule, and other changes | 42 | 85.09 ± 1.57% | 87.71 ± 1.23% | 80.73 ± 1.94% |
 | Same combined settings | 1 | 78.51 ± 5.17% | 86.61 ± 2.12% | 73.12 ± 5.90% |
 
-Combining individually tested settings did not outperform the 8-head baseline and produced different results across the two splits. The full tables and per-class results are in [ablations.md](ablations.md).
+Combining individually tested settings did not outperform the 8-head baseline and produced different results across the two splits. These are earlier non-pruned runs. The full ablation tables and per-class results are in [ablations.md](ablations.md).
 
 ## Architecture
 
@@ -119,11 +119,11 @@ The attention block applies channel attention followed by spatial attention. Spa
 
 ### Adaptive spectral pruning (experimental)
 
-The only supported adaptive pruning architecture is `CNN_TRANSFORMER_CSA_BAND_PRUNING`. It combines pooled output from the existing MHSA branch with one spatial-mean descriptor per input band to score bands. It adds no Transformer and performs no convolution across bands. After a 10-epoch warm-up, STE training uses a global binary mask in the forward pass and soft per-sample gates for the backward gradient. Each pruning budget requires its own training run.
+The notebook default is `CNN_TRANSFORMER_CSA_BAND_PRUNING` with a 30% bottom-k budget. The gate model takes all 103 bands and applies its learned binary mask; the compact model takes only the 72 retained bands. After fine-tuning the compact model for 30 epochs, the notebook evaluates both on the same test split and seed. It does not train a separate no-pruning baseline.
 
-The global bottom-k mask is selected from mean gate scores on the training loader only. For inference, the selected bands are fixed across patches: the normalized image cube is filtered once, and a compact CTA-Net is created with the input projection narrowed to the retained bands. The pruning head is not part of compact-model inference. `PRUNING_FINETUNE_EPOCHS` controls optional fine-tuning of that compact classifier on training data (default `30`; use `0` to skip it). Results with and without compact-model fine-tuning are different protocols.
+Gate scores are estimated from training samples only. STE starts after a 10-epoch soft-gate warm-up: the forward pass uses a binary mask and the backward pass uses soft gates for the approximate gradient. Validation selects checkpoints; test data does not choose bands or checkpoints.
 
-The five-seed STE sweep uses one fixed train/validation split; the test split was not used. Timing is single-thread CPU at batch size 32, after filtering the normalized cube once:
+A separate five-seed STE sweep used validation data, not the test set. Timing is single-thread CPU after filtering the normalized cube once:
 
 | Bands removed | Bands kept | Compact validation OA after fine-tuning | Full → compact latency | Ratio |
 |---:|---:|---:|---:|---:|
@@ -131,7 +131,7 @@ The five-seed STE sweep uses one fixed train/validation split; the test split wa
 | 80% | 21 | 83.6 ± 2.0% | 2.210 → 2.126 ms/sample | 1.04× |
 | 90% | 10 | 78.7 ± 6.6% | 2.192 → 2.119 ms/sample | 1.03× |
 
-The measured gains are small and noisy; these experiments do not establish a robust inference speedup. A separate one-seed 99% pruning run retained one band, reached 46.7% validation OA after fine-tuning, and measured 1.01× batch-32 speedup. Detailed protocols and historical results are in [ablations.md](ablations.md).
+These timing gains are small and do not establish a robust speedup. A separate one-seed 99% pruning run retained one band and reached 46.7% validation OA after fine-tuning. Detailed protocols are in [ablations.md](ablations.md).
 
 ### Sample amplification
 
@@ -139,13 +139,12 @@ The `CTA_NET` mode materializes four training pools for every run: original patc
 
 ## Training pipeline
 
-1. Load Pavia University and its ground-truth labels.
-2. Create a reproducible few-shot split with 10 training and 5 validation pixels per class.
-3. Normalize each spectral band using min-max scaling across the scene, then reflect-pad the cube and extract `15 x 15` patches.
-4. Select an architecture and materialize the training data, optionally using CTA-Net sample amplification.
-5. Train with Adam and save the checkpoint with the lowest validation loss.
-6. Evaluate per-class accuracy, Overall Accuracy (OA), Average Accuracy (AA), Cohen's Kappa, and the confusion matrix.
-7. Save run configuration and test metrics as JSON. In multi-seed mode, also save mean and sample standard deviation across runs.
+1. Load `PaviaU.mat` and `PaviaU_gt.mat`; create the fixed random split (seed 42, 10 train and 5 validation pixels per class).
+2. Apply per-band min-max normalization, reflect padding, and extract `15 x 15` patches. CTA-Net sample amplification is applied to training patches only.
+3. Train the gated model for 150 epochs. STE is enabled after its 10-epoch warm-up; validation selects the checkpoint and the training loader determines the global bottom-k mask.
+4. Build the compact model from the retained bands and fine-tune it for 30 epochs. No separate no-pruning model is trained.
+5. Evaluate and compare gated and compact models per seed on the same test split. The notebook prints aggregate metrics, plots both confusion matrices, and builds classification maps for the seed with the lowest compact-model validation loss.
+6. Save checkpoints under `outputs/checkpoints/` and evaluation/comparison reports under `outputs/results/`.
 
 ## Project structure
 
@@ -168,44 +167,43 @@ The Pavia University `.mat` files are not included. Place `PaviaU.mat` and `Pavi
 
 ## Configuration
 
-The notebook keeps the experiment configuration together near its beginning. Important options include:
+The notebook's current defaults are:
 
-| Setting | Current value | Description |
-|----------|---------------|-------------|
-| `PATCH_SIZE` | `15` | Spatial patch width and height |
-| `TRAIN_SAMPLES_PER_CLASS` | `10` | Few-shot training pixels per class |
-| `VALIDATION_SAMPLES_PER_CLASS` | `5` | Validation pixels per class |
-| `TRAINING_SEED_MODE` | `ONE_FIXED_TRAIN_SEED` | One fixed seed, a fixed reusable seed list, or newly randomized multi-seed runs |
-| `NUM_SEEDS` | `10` | Runs in multi-training-seed mode |
-| `TRAINING_SEEDS_FIXED` | `[]` | Paste the printed seed list here when using `MULTI_FIXED_TRAIN_SEED` |
-| `ARCHITECTURE` | `CNN_TRANSFORMER_CSA` | Select CNN, CT, CSA, or CT + CSA |
-| `TRANSFORMER_HEADS` | `4` | Notebook default; the best recorded baseline ablation uses `8` heads |
-| `TRANSFORMER_FFN_EXPANSION` | `4` | Feed-forward hidden-width multiplier |
-| `SAMPLE_AMPLIFICATION_MODE` | `CTA_NET` | Disable SA or use the CTA-Net augmentation |
-| `INPUT_NORMALIZATION` | `MIN_MAX` | Per-band min-max or z-score normalization |
-| `PRUNING_GATE_SLOPE` | `20.0` | Fixed sigmoid slope for adaptive spectral gates |
-| `PRUNING_SPARSITY_WEIGHT` | `0.001` | Loss weight encouraging low gate values |
-| `PRUNING_PERCENTAGE` | `5.0` | Bottom percentage of mean training gates to remove; rounded to the nearest whole number of bands (5 of 103 at the default) |
-| `PRUNING_FINETUNE_EPOCHS` | `30` | Compact-model fine-tuning epochs; set to `0` to skip fine-tuning |
-| `WEIGHT_DECAY` | `0.0` | Adam weight decay |
+| Setting | Value |
+|----------|-------|
+| `ARCHITECTURE` | `CNN_TRANSFORMER_CSA_BAND_PRUNING` |
+| `SPLIT_SEED` / `DATA_SPLIT_TYPE` | `42` / `RANDOM` |
+| Train / validation samples per class | `10` / `5` |
+| `PATCH_SIZE` / `INPUT_NORMALIZATION` | `15` / `MIN_MAX` |
+| `FEATURE_CHANNELS` / `TRANSFORMER_HEADS` | `128` / `8` |
+| Transformer FFN expansion / residual scale | `4` / `0.5` |
+| Position encoding / CNN normalization | `LEARNED_2D` / `BATCH_NORM` |
+| `SAMPLE_AMPLIFICATION_MODE` | `CTA_NET` (central region `3`, noise std `0.04`) |
+| `EPOCHS` / compact fine-tuning | `150` / `30` |
+| Optimizer / learning rate / weight decay | Adam / `0.00008` / `0.0` |
+| `LR_SCHEDULING` | `FIXED` |
+| `PRUNING_PERCENTAGE` | `30.0` (31 of 103 bands removed; 72 retained) |
+| Pruning gate slope / sparsity weight | `20.0` / `0.001` |
+| `TRAINING_SEED_MODE` / `NUM_SEEDS` | `MULTI_FIXED_TRAIN_SEED` / `5` |
+| Active training seeds | `1496815513`, `1940408339`, `194592138`, `628378136`, `109688099` |
+| `BATCH_SIZE` / `NUM_WORKERS` | `32` / `0` |
+| `DEVICE` | CUDA when available, otherwise CPU |
 
-The SA values that are not specified by the paper are documented in [the sample amplification note](docs/research/cta_sample_amplification.md). Transformer reconstruction choices are summarized in [the Conformer analysis](docs/research/hsi_conformer_architectures.md).
+The five active seeds are the first half of the fixed ablation list; the other five remain commented out in the notebook. Change the settings in the configuration cell to run another experiment. The SA settings are described in [the sample amplification note](docs/research/cta_sample_amplification.md); Transformer reconstruction choices are in [the Conformer analysis](docs/research/hsi_conformer_architectures.md).
 
 ## Usage
 
-Open `hsi_classification.ipynb`, configure the dataset paths and experiment settings, then run the cells in order. Training always uses the configured number of epochs in `EPOCHS`.
+Keep `hsi_classification.ipynb` and the six imported modules (`data.py`, `evaluation.py`, `models.py`, `plotting.py`, `training.py`, `utils.py`) in the same project folder and run the notebook from that folder. Locally, put `PaviaU.mat` and `PaviaU_gt.mat` in `data/raw/`. On Kaggle, attach the Pavia University dataset; the notebook finds both files under `/kaggle/input` and loads the project modules from the repository.
 
-For each full run, the notebook writes checkpoints under `outputs/checkpoints/` and evaluation reports under `outputs/results/`. Each report includes the configuration, split and training seeds, sample amplification metadata, validation-selected checkpoint, and test metrics.
-
-The reusable components can also be imported from `data.py`, `models.py`, `training.py`, and `evaluation.py` for custom experiments.
+Run the notebook cells in order. It writes model and compact-model checkpoints under `outputs/checkpoints/`, and test and paired-comparison reports under `outputs/results/`. Required packages are PyTorch, NumPy, SciPy, scikit-learn, and Matplotlib.
 
 ## Reproducibility and limitations
 
-- The current ten-run result uses one fixed few-shot split and ten training seeds. A full ten-split study is planned separately.
+- The notebook is configured for one fixed few-shot split and five training seeds. Historical non-pruned ablations use ten seeds on split 42. Neither is a study across independent data splits.
 - The paper does not specify every Transformer, preprocessing, or sample amplification parameter. Those implementation choices are recorded in the research notes and run reports.
 - Per-band min-max normalization uses the full image cube. It does not use labels, but it uses feature statistics from the complete scene.
 - Random pixel splits allow neighboring patches to overlap spatially. Spatially separated splits are available as a separate robustness experiment.
-- The reported local mean OA is below the paper's absolute OA. The observed OA improvement from sample amplification is close to the paper's ablation gain.
+- Recorded non-pruned results are below the paper's absolute OA. The sample-amplification OA gain is close to the paper's component-ablation gain.
 
 ## Reference
 

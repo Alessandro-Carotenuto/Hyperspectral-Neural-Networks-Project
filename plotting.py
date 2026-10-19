@@ -182,7 +182,6 @@ def plot_pruning_mask(mean_band_gates, selected_band_indices, run_label):
         band_numbers[~selected_mask], mean_band_gates[~selected_mask],
         color="gray", s=18, label="Dropped",
     )
-    axes[1].axhline(0.5, color="darkorange", linestyle="--", label="0.5 threshold")
     axes[1].set_xlabel("Original spectral band")
     axes[1].set_ylabel("Mean gate")
     axes[1].set_ylim(-0.05, 1.05)
