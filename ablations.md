@@ -1,6 +1,6 @@
-# Ablation study — Pavia University
+# Ablazioni e risultati — Pavia University
 
-Risultati dell'ablation della Tabella 7 di CTA-Net e registro delle prove architetturali.
+Registro delle ablation CTA-Net e delle prove architetturali. Ogni confronto indica cosa cambia, la configurazione e i risultati; le tabelle per classe conservano i valori dei report.
 
 ## Protocollo dei risultati raccolti
 
@@ -10,7 +10,7 @@ Risultati dell'ablation della Tabella 7 di CTA-Net e registro delle prove archit
 - Patch: `15 x 15`; 10 campioni di training e 5 di validation per classe.
 - Metriche: media ± deviazione standard tra i 10 training run.
 - Il paper riporta 10 esperimenti randomizzati; i nostri risultati qui sotto sono condizionati allo split 42.
-- Heads usati nei risultati multi-seed: **4** (confermato dall'utente; coincide con il valore corrente del notebook).
+- Baseline dei risultati multi-seed: **4 heads**; configurazione corrente del notebook: **8 heads**.
 
 ```python
 TRAINING_SEEDS_FIXED = [
@@ -29,7 +29,7 @@ TRAINING_SEEDS_FIXED = [
 
 ## Baseline completa
 
-Configurazione: **CT + CSA + SA** (CTA-Net completa).
+**Componenti:** CT unisce feature locali CNN e contesto Transformer; CSA applica channel-spatial attention; SA amplia i campioni di training. **Configurazione:** CTA-Net completa, Pavia University, split 42, 4 heads e protocollo multi-seed descritto sopra.
 
 | Provenienza | OA | AA | Kappa |
 |---|---:|---:|---:|
@@ -37,6 +37,8 @@ Configurazione: **CT + CSA + SA** (CTA-Net completa).
 | Paper, Pavia University | 94,42 ± 1,90% | 92,84 ± 1,69% | 92,71 ± 2,43% |
 
 ## Ablation dei componenti già eseguite
+
+Ogni riga rimuove un componente dalla CTA-Net completa. I risultati del paper sono riportati accanto ai nostri per confronto.
 
 | Configurazione | SA | CT | CSA | Nostro OA | Nostro AA | Nostro Kappa | Paper OA | Paper AA | Paper Kappa |
 |---|:---:|:---:|:---:|---:|---:|---:|---:|---:|
@@ -52,28 +54,26 @@ Configurazione: **CT + CSA + SA** (CTA-Net completa).
 - Aggiungere SA a CT + CSA: **+1,45 punti OA**, **+0,97 AA**, **+1,80 Kappa** (paper: +1,23, +1,44, +1,58).
 - Aggiungere CSA a CT + SA: **−2,02 punti OA**, **−1,58 AA**, **−2,47 Kappa** (paper: +0,35, +0,71, +0,44).
 
-## Ablation architetturali da rifare sulla pipeline completa
+## Ablation architetturali a un fattore
 
-Le prove seguenti vanno eseguite con pipeline completa **CT + CSA + SA**, split 42 e gli stessi `TRAINING_SEEDS_FIXED` per ogni configurazione. Cambiare un solo parametro alla volta.
+Riferimento: pipeline completa **CT + CSA + SA**, 4 heads, split 42 e gli stessi dieci `TRAINING_SEEDS_FIXED`. In ogni confronto cambia solo il fattore indicato. I risultati sono medie ± deviazione standard tra i training seed.
 
-| Fattore | Valore attuale | Valori da provare |
+| Fattore | Riferimento | Varianti con risultati sotto |
 |---|---:|---|
-| Transformer heads | 4 | 2, 8 |
-| Transformer dropout | 0,1 | 0,3 e 0,5 (eseguiti) |
-| FFN expansion factor | 4 | 2, 8 (entrambi eseguiti) |
-| FFN residual scale | 0,5 | 1,0 e 2 (eseguiti) |
-| Feature channels | 128 | 64 e 68 (run singolo precedente identificato dal nome file come `f68`) |
-| Positional encoding | Learned 2D | Conformer 1D (eseguito) |
-| Normalizzazione CNN module | BatchNorm | LayerNorm (eseguita) |
-| Input normalization | Min-max | Z-score (eseguita) |
-| Patch size | 15 × 15 | 7 × 7, 11 × 11, 19 × 19 e 23 × 23 (eseguite) |
-| LR scheduler | Fixed | Cosine annealing (eseguito) |
-
-Registrare per ogni run la configurazione, i seed, le metriche OA/AA/Kappa e media ± deviazione standard. Sono stati raccolti i risultati per heads, FFN residual scale, expansion 2/8, dropout 0,3/0,5, feature channels 64/256, positional encoding Conformer 1D, normalizzazione LayerNorm, input Z-score, patch 7/11/19/23 × 23 e scheduler cosine annealing.
+| Heads di attenzione | 4 | 2, 8, 16 |
+| Dropout Transformer | 0,1 | 0,3; 0,5 |
+| Espansione FFN | 4 | 2; 8 |
+| Scala residuale FFN | 0,5 | 1; 2 |
+| Canali feature | 128 | 68; 256; anche 64 nei confronti a 8 heads |
+| Positional encoding | Learned 2D | Conformer 1D |
+| Normalizzazione CNN | BatchNorm | LayerNorm |
+| Normalizzazione input | Min-max | Z-score |
+| Patch | 15 × 15 | 7 × 7; 11 × 11; 19 × 19; 23 × 23 |
+| Scheduler | Fixed | Cosine annealing |
 
 ### Transformer heads — risultati
 
-Pipeline completa CT + CSA + SA, split 42 e lista fissa dei training seed. Il riferimento `heads = 4` è la baseline completa riportata sopra.
+**Che cos'è:** ogni head calcola attenzione su una proiezione distinta delle feature. **Configurazione:** CT + CSA + SA; varia solo il numero di heads. Riferimento `heads = 4`.
 
 | Heads | OA | AA | Kappa |
 |---:|---:|---:|---:|
@@ -98,6 +98,8 @@ Pipeline completa CT + CSA + SA, split 42 e lista fissa dei training seed. Il ri
 
 ### Transformer dropout — risultati
 
+**Che cos'è:** dropout azzera casualmente attivazioni del Transformer durante il training per regolarizzare il modello. **Configurazione:** CT + CSA + SA; varia solo il tasso di dropout (`0,1` è il riferimento).
+
 | Transformer dropout | OA | AA | Kappa |
 |---:|---:|---:|---:|
 | 0,1 (baseline) | 85,55 ± 4,36% | 89,00 ± 2,17% | 81,48 ± 5,23% |
@@ -120,6 +122,8 @@ Pipeline completa CT + CSA + SA, split 42 e lista fissa dei training seed. Il ri
 
 ### FFN residual scale — risultati
 
+**Che cos'è:** moltiplicatore applicato al contributo residuale della FFN nel Transformer. **Configurazione:** CT + CSA + SA; varia solo la scala (`0,5` è il riferimento).
+
 | FFN residual scale | OA | AA | Kappa |
 |---:|---:|---:|---:|
 | 0,5 (baseline) | 85,55 ± 4,36% | 89,00 ± 2,17% | 81,48 ± 5,23% |
@@ -141,6 +145,8 @@ Pipeline completa CT + CSA + SA, split 42 e lista fissa dei training seed. Il ri
 | Shadows | 95,95 ± 2,61% | 96,17 ± 2,03% |
 
 ### FFN expansion factor — risultati
+
+**Che cos'è:** rapporto tra la larghezza interna della FFN e i canali del Transformer. **Configurazione:** CT + CSA + SA; varia solo l'espansione (`4` è il riferimento).
 
 | FFN expansion factor | OA | AA | Kappa |
 |---:|---:|---:|---:|
@@ -178,6 +184,8 @@ Pipeline completa CT + CSA + SA, split 42 e lista fissa dei training seed. Il ri
 
 ### Feature channels — risultati
 
+**Che cos'è:** numero di canali delle feature intermedie del modello. **Configurazione:** CT + CSA + SA; varia solo la larghezza, salvo la prova singola da 68 canali indicata sotto.
+
 | Feature channels | OA | AA | Kappa |
 |---:|---:|---:|---:|
 | 128 (baseline) | 85,55 ± 4,36% | 89,00 ± 2,17% | 81,48 ± 5,23% |
@@ -202,6 +210,8 @@ Il messaggio iniziale del run singolo indicava `FEATURE CHANNELS = 64`, ma il re
 
 ### Positional encoding — risultati
 
+**Che cos'è:** aggiunge alle feature l'informazione sulla posizione dei token. `Learned 2D` impara un bias per offset spaziale; `Conformer 1D` usa encoding sinusoidale relativo per la sequenza appiattita. **Configurazione:** CT + CSA + SA; cambia solo il metodo posizionale.
+
 | Positional encoding | OA | AA | Kappa |
 |---|---:|---:|---:|
 | Learned 2D (baseline) | 85,55 ± 4,36% | 89,00 ± 2,17% | 81,48 ± 5,23% |
@@ -222,6 +232,8 @@ Il messaggio iniziale del run singolo indicava `FEATURE CHANNELS = 64`, ma il re
 | Shadows | 96,63 ± 1,26% |
 
 ### Normalizzazione nel CNN module — risultati
+
+**Che cos'è:** normalizza le attivazioni CNN. BatchNorm usa statistiche del batch; LayerNorm normalizza i canali in ogni posizione. **Configurazione:** CT + CSA + SA; cambia solo la normalizzazione CNN.
 
 | Normalizzazione | OA | AA | Kappa |
 |---|---:|---:|---:|
@@ -244,6 +256,8 @@ Il messaggio iniziale del run singolo indicava `FEATURE CHANNELS = 64`, ma il re
 
 ### Input normalization — risultati
 
+**Che cos'è:** normalizza i valori spettrali prima del modello. Min-max scala per banda nell'intervallo previsto; Z-score centra e divide per la deviazione standard. **Configurazione:** CT + CSA + SA; cambia solo la normalizzazione dell'input.
+
 | Input normalization | OA | AA | Kappa |
 |---|---:|---:|---:|
 | Min-max (baseline) | 85,55 ± 4,36% | 89,00 ± 2,17% | 81,48 ± 5,23% |
@@ -264,6 +278,8 @@ Il messaggio iniziale del run singolo indicava `FEATURE CHANNELS = 64`, ma il re
 | Shadows | 96,57 ± 1,78% |
 
 ### Patch size — risultati
+
+**Che cos'è:** dimensione spaziale del patch usato per classificare il pixel centrale. Patch più grandi includono più contesto. **Configurazione:** CT + CSA + SA; cambia solo la dimensione del patch.
 
 | Patch size | OA | AA | Kappa |
 |---:|---:|---:|---:|
@@ -289,6 +305,8 @@ Il messaggio iniziale del run singolo indicava `FEATURE CHANNELS = 64`, ma il re
 
 ### LR scheduler — risultati
 
+**Che cos'è:** regola come cambia il learning rate durante il training. `Fixed` lo mantiene costante; `Cosine annealing` lo riduce con andamento cosinusoidale. **Configurazione:** CT + CSA + SA; cambia solo lo scheduler.
+
 | Scheduler | OA | AA | Kappa |
 |---|---:|---:|---:|
 | Fixed (baseline) | 85,55 ± 4,36% | 89,00 ± 2,17% | 81,48 ± 5,23% |
@@ -310,7 +328,7 @@ Il messaggio iniziale del run singolo indicava `FEATURE CHANNELS = 64`, ma il re
 
 ## Combinazione di tutte le migliori ablation
 
-Configurazione combinata indicata dal report Kaggle: **heads 8**, FFN expansion **2**, dropout **0,3**, FFN residual scale **2**, positional encoding **Conformer 1D**, normalizzazione del CNN module **LayerNorm**, input **Z-score**, patch **11 × 11**, feature channels **64**, LR scheduler **cosine annealing**, Sample Amplification **CTA-Net**. Training seed fissi: la stessa lista riportata sopra. Sono stati eseguiti due split distinti.
+**Configurazione:** combinazione scelta dai migliori risultati delle prove singole: 8 heads, FFN expansion 2, dropout 0,3, residual scale 2, Conformer 1D, CNN LayerNorm, input Z-score, patch 11 × 11, 64 canali, cosine annealing e SA. Sono stati eseguiti split 42 e split 1, con la lista fissa dei dieci training seed. È una nuova combinazione: non sommare o interpretare i risultati delle prove singole come sua previsione.
 
 | Split seed | OA | AA | Kappa |
 |---:|---:|---:|---:|
@@ -333,7 +351,7 @@ Configurazione combinata indicata dal report Kaggle: **heads 8**, FFN expansion 
 
 ## Ablation aggiuntive sulla baseline + 8 heads
 
-Pipeline completa, split 42, stessi 10 training seed. Un solo fattore aggiuntivo varia per run; tutti gli altri parametri restano quelli del riferimento baseline + 8 heads.
+**Configurazione:** pipeline completa, split 42 e gli stessi dieci training seed. Riferimento: baseline completa con 8 heads; ogni riga cambia il parametro indicato e lascia invariati gli altri.
 
 | Configurazione | OA | AA | Kappa |
 |---|---:|---:|---:|
@@ -380,7 +398,7 @@ Pipeline completa, split 42, stessi 10 training seed. Un solo fattore aggiuntivo
 
 ## Altre combinazioni — 4 heads
 
-Pipeline completa, split 42 e lista fissa dei 10 training seed. Configurazioni indicate dai report Kaggle.
+**Configurazione:** pipeline completa, split 42 e stessi dieci training seed. I run confrontano LayerNorm + FFN expansion 2, con o senza cosine annealing, rispetto alla baseline a 4 heads.
 
 | Configurazione | OA | AA | Kappa |
 |---|---:|---:|---:|
@@ -403,6 +421,8 @@ Pipeline completa, split 42 e lista fissa dei 10 training seed. Configurazioni i
 
 #### Accuracy per classe — nuove combinazioni
 
+Valori per classe dei due run aggiuntivi: 8 heads con patch 11 × 11 + Z-score e 8 heads con Conformer 1D.
+
 | Classe | 8h + patch11 + Z-score | 8h + Conformer 1D |
 |---|---:|---:|
 | Asphalt | 86,40 ± 2,97% | 85,05 ± 4,29% |
@@ -417,7 +437,7 @@ Pipeline completa, split 42 e lista fissa dei 10 training seed. Configurazioni i
 
 ## Combinazioni a coppie: heads 8
 
-Entrambi i run usano la pipeline completa, split 42, gli stessi 10 training seed e mantengono gli altri parametri della baseline.
+**Che cosa cambia:** espansione FFN = larghezza del livello interno; residual scale = peso del contributo residuale FFN. **Configurazione:** pipeline completa, split 42 e stessi dieci training seed; la tabella confronta singole modifiche e combinazioni rispetto al riferimento a 8 heads.
 
 | Configurazione | Heads | FFN expansion | FFN residual scale | OA | AA | Kappa |
 |---|---:|---:|---:|---:|---:|---:|
@@ -443,7 +463,7 @@ Entrambi i run usano la pipeline completa, split 42, gli stessi 10 training seed
 
 ## Adaptive spectral pruning — risultati storici e variante STE supportata
 
-Le tabelle legacy riportano esperimenti delle precedenti varianti non-STE; restano come confronto storico, ma tali architetture non sono più selezionabili nel codice. L'unica variante di pruning supportata è `CNN_TRANSFORMER_CSA_BAND_PRUNING`.
+**Che cos'è:** il pruning seleziona bande spettrali da rimuovere e valuta una CTA-Net compatta. La variante STE corrente apprende gate con straight-through estimator; raw-mean e soglia fissa sono confronti storici, non varianti selezionabili nel codice. L'unica architettura supportata è `CNN_TRANSFORMER_CSA_BAND_PRUNING`.
 
 Report Kaggle forniti dall'utente: split fisso `42`, 10 training seed della lista `TRAINING_SEEDS_FIXED`. I valori sono medie ± deviazione standard campionaria tra training seed condizionati allo stesso split; non rappresentano 10 split indipendenti. Per il bottom-k, il 5% corrisponde a 5 bande rimosse (98 mantenute) e il 20% a 21 bande rimosse (82 mantenute). I risultati sotto differiscono per percentuale di pruning, numero di heads e fine-tuning del modello compatto.
 
@@ -484,7 +504,7 @@ Il risultato senza fine-tuning è utile come misura del trasferimento immediato 
 
 ### Raw-mean contro STE: training completo a 70/80/90%
 
-Confronto appaiato su Pavia University: split `42` (90 campioni di training, 45 validation), training seed `[1496815513, 1940408339, 194592138, 628378136, 109688099]`, 150 epoche per modello e budget, seguite da 30 epoche di fine-tuning del classificatore compatto. Entrambe le varianti hanno usato CPU, slope `20`, 16 feature channels, 4 teste, patch `15` e batch `32`. Per lo STE il warm-up è di 10 epoche. La test split non è stata usata. Il 70/80/90% corrisponde rispettivamente a 72/82/93 bande rimosse, quindi 31/21/10 mantenute.
+**Che cosa cambia:** raw-mean stima l'importanza dalla media per banda; STE apprende gate e usa un passaggio straight-through per il gradiente. **Configurazione:** Pavia, split 42 (90 train e 45 validation), seed `1496815513`, `1940408339`, `194592138`, `628378136`, `109688099`, 150 epoche + 30 di fine-tuning compatto, CPU, slope 20, 16 canali, 4 heads, patch 15 e batch 32. STE warm-up 10 epoche. Test escluso. Rimozione 70/80/90% = 72/82/93 bande, 31/21/10 mantenute.
 
 Accuratezza sul validation set del modello compatto dopo fine-tuning, media ± deviazione standard campionaria tra i cinque training seed:
 
@@ -509,11 +529,13 @@ Questi numeri indicano un possibile vantaggio modesto a 80/90%, mentre a 70% il 
 
 ### Prova STE con pruning al 99%
 
-Un solo training seed (`1496815513`), con split `42`, protocollo di training e fine-tuning analogo alla sweep precedente. Sono state rimosse 102 bande su 103; è rimasta la banda 96 (indice 1-based). L'accuratezza validation del compatto è passata da 51,1% prima del fine-tuning a 46,7% dopo 30 epoche. Il test set non è stato usato.
+**Che cos'è:** prova di stress della selezione STE, mantenendo una sola banda su 103. **Configurazione:** seed `1496815513`, split 42, stesso protocollo della sweep precedente; test escluso. È rimasta la banda 96 (indice 1-based). Validation del compatto: 51,1% prima del fine-tuning, 46,7% dopo 30 epoche.
 
 Nel rebenchmark CPU a thread singolo, batch 1: `2,095 ms` per campione full-band e `2,045 ms` compatto. Batch 32: `1,058 ms` per campione full-band e `1,047 ms` compatto, rapporto `1,01×`. La filtrazione del cubo una tantum è stata misurata in circa `0,168 ms`; il vantaggio sulla latenza del modello resta praticamente nullo e il dato è un singolo run diagnostico. Report: `outputs/diagnostics/raw_mean_ste_99pct_seed1496815513.json`.
 
 ### Variante precedente con soglia fissa
 
-Un report precedente a 4 heads (`gs20_sp0p001`, prima del bottom-k) ha ottenuto OA `61,71 ± 5,47%`, AA `69,39 ± 4,82%` e Kappa `52,27 ± 5,87%`; i grafici mostravano solo 2–3 bande eliminate. Questa variante usava una decisione a soglia e non imponeva una quota di pruning, quindi non è direttamente confrontabile con i risultati bottom-k al 5% o al 20%. Per gli esperimenti successivi è stato adottato il bottom-k con quota esplicita.
+**Che cos'è:** la soglia fissa decide quali gate mantenere in base a un valore, senza fissare quante bande eliminare; bottom-k rimuove invece una quota prestabilita. **Configurazione:** report storico 4 heads `gs20_sp0p001`, prima del bottom-k. Risultati: OA `61,71 ± 5,47%`, AA `69,39 ± 4,82%`, Kappa `52,27 ± 5,87%`; grafici con 2–3 bande eliminate. Non direttamente confrontabile con bottom-k 5%/20%.
+
+Gli esperimenti successivi hanno adottato bottom-k con quota esplicita.
 
