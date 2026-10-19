@@ -43,19 +43,22 @@ class MultiscaleCNNBlock(nn.Module):
         )
 
     def forward(self, features):
+        # Run the four convolution branches
         branch_features = [
             self.branch_1x1(features),
             self.branch_3x3(features),
             self.branch_two_3x3(features),
             self.branch_three_3x3(features),
         ]
+        # Join branch outputs along the channel dimension
         concatenated_features = torch.cat(branch_features, dim=1)
+        # Reduce the joined channels back to the block width
         fused_features = self.fusion(concatenated_features)
         return fused_features
 
 
 class FeedForwardModule(nn.Module):
-    """Macaron-style feed-forward module used by the Conformer block."""
+    """Feed-forward block with a residual connection and LayerNorm."""
 
     def __init__(
         self,
@@ -78,11 +81,12 @@ class FeedForwardModule(nn.Module):
         )
 
     def forward(self, tokens):
+        # Apply the feed-forward layers and add their scaled output to the input
         return tokens + self.residual_scale * self.layers(tokens)
 
 
 class RelativePositionBias2D(nn.Module):
-    """Learn one attention bias for each two-dimensional relative offset."""
+    """Learned 2D attention bias for each relative token offset."""
 
     def __init__(self, height, width, num_heads):
         super().__init__()
@@ -98,6 +102,7 @@ class RelativePositionBias2D(nn.Module):
 
         rows = torch.arange(self.height)
         columns = torch.arange(self.width)
+        # Build a lookup from each token pair to its relative offset
         coordinates = torch.stack(
             torch.meshgrid(rows, columns, indexing="ij")
         )
@@ -106,6 +111,7 @@ class RelativePositionBias2D(nn.Module):
             flattened_coordinates[:, :, None]
             - flattened_coordinates[:, None, :]
         )
+        # Shift offsets into the table's index range
         relative_coordinates[0] += self.height - 1
         relative_coordinates[1] += self.width - 1
         relative_coordinates[0] *= 2 * self.width - 1
@@ -113,16 +119,22 @@ class RelativePositionBias2D(nn.Module):
         self.register_buffer(
             "relative_position_index",
             relative_position_index,
+            # These indices are fixed, so keep them out of the checkpoint
             persistent=False,
         )
         nn.init.trunc_normal_(self.bias_table, std=0.02)
 
     def forward(self):
+        # Count spatial tokens in the feature map
         token_count = self.height * self.width
-        bias = self.bias_table[
-            self.relative_position_index.reshape(-1)
-        ]
+
+        # Look up the learned bias for each query-key pair
+        bias = self.bias_table[self.relative_position_index.reshape(-1)]
+
+        # Arrange values as [query, key, head]
         bias = bias.reshape(token_count, token_count, -1)
+
+        # Return [batch, head, query, key] for broadcasting in MHSA
         return bias.permute(2, 0, 1).unsqueeze(0)
 
 
@@ -148,6 +160,7 @@ class ConformerRelativePositionEncoding1D(nn.Module):
             torch.zeros(num_heads, self.head_channels)
         )
 
+        # Sine and cosine values use pairs of channels
         relative_positions = torch.arange(
             -(token_count - 1), token_count, dtype=torch.float32
         )
@@ -155,6 +168,7 @@ class ConformerRelativePositionEncoding1D(nn.Module):
             torch.arange(0, channels, 2, dtype=torch.float32)
             * (-math.log(10000.0) / channels)
         )
+        # Build an embedding for every possible sequence offset
         sinusoidal_embeddings = torch.zeros(
             2 * token_count - 1, channels
         )
@@ -169,6 +183,7 @@ class ConformerRelativePositionEncoding1D(nn.Module):
             + token_count
             - 1
         )
+        # Keep fixed positional data as non-persistent buffers
         self.register_buffer(
             "sinusoidal_embeddings",
             sinusoidal_embeddings,
@@ -181,30 +196,35 @@ class ConformerRelativePositionEncoding1D(nn.Module):
         )
 
     def forward(self, queries, keys):
-        projected_positions = self.position_projection(
-            self.sinusoidal_embeddings
-        )
+        # Project each sinusoidal relative offset into the model's channel space
+        projected_positions = self.position_projection(self.sinusoidal_embeddings)
+
+        # Split projected channels across attention heads
         projected_positions = projected_positions.reshape(
             projected_positions.shape[0],
             self.num_heads,
             self.head_channels,
         )
-        pairwise_positions = projected_positions[
-            self.relative_position_index
-        ]
 
+        # Select the positional embedding for every query-key pair
+        pairwise_positions = projected_positions[self.relative_position_index]
+
+        # Compare each query with every key, adding a learned content bias
         content_scores = torch.einsum(
             "bhid,bhjd->bhij",
             queries + self.content_bias[None, :, None, :],
             keys,
         )
+
+        # Compare each query with its pairwise relative-position embedding
         position_scores = torch.einsum(
             "bhid,ijhd->bhij",
             queries + self.position_bias[None, :, None, :],
             pairwise_positions,
         )
-        return (content_scores + position_scores) * self.scale
 
+        # Combine and scale content and relative-position scores
+        return (content_scores + position_scores) * self.scale
 
 class RelativeMultiHeadSelfAttention(nn.Module):
     """Pre-normalized MHSA with configurable relative position encoding."""
@@ -233,6 +253,7 @@ class RelativeMultiHeadSelfAttention(nn.Module):
         )
         self.normalization = nn.LayerNorm(channels)
         self.qkv_projection = nn.Linear(channels, 3 * channels)
+        # Choose the relative-position method
         if self.position_encoding == TransformerPositionEncoding.LEARNED_2D:
             self.relative_position_bias = RelativePositionBias2D(
                 height, width, num_heads
@@ -255,11 +276,17 @@ class RelativeMultiHeadSelfAttention(nn.Module):
         self.output_dropout = nn.Dropout(dropout)
 
     def forward(self, tokens):
+        # Keep the input for the residual connection
         residual = tokens
+
+        # Normalize tokens before generating queries, keys, and values
         normalized_tokens = self.normalization(tokens)
         batch_size, token_count, channels = normalized_tokens.shape
 
+        # Project each token into query, key, and value vectors
         qkv = self.qkv_projection(normalized_tokens)
+
+        # Split the projection into three tensors and multiple attention heads
         qkv = qkv.reshape(
             batch_size,
             token_count,
@@ -267,9 +294,12 @@ class RelativeMultiHeadSelfAttention(nn.Module):
             self.num_heads,
             self.head_channels,
         )
+
+        # Put query-key-value first, then batch, head, token, and channel axes
         qkv = qkv.permute(2, 0, 3, 1, 4)
         queries, keys, values = qkv.unbind(dim=0)
 
+        # Compute query-key similarity and add learned 2D relative bias
         if self.position_encoding == TransformerPositionEncoding.LEARNED_2D:
             attention_scores = queries @ keys.transpose(-2, -1)
             attention_scores = attention_scores * self.scale
@@ -277,18 +307,30 @@ class RelativeMultiHeadSelfAttention(nn.Module):
                 attention_scores + self.relative_position_bias()
             )
         else:
+            # Compute content and relative-position scores with Conformer encoding
             attention_scores = self.conformer_relative_position(
                 queries, keys
             )
+
+        # Convert scores into attention weights over key tokens
         attention_weights = attention_scores.softmax(dim=-1)
+
+        # Drop attention weights during training for regularization
         attention_weights = self.attention_dropout(attention_weights)
 
+        # Use attention weights to combine value vectors
         attended_tokens = attention_weights @ values
+
+        # Join attention heads back into the original token shape
         attended_tokens = attended_tokens.transpose(1, 2).reshape(
             batch_size, token_count, channels
         )
+
+        # Project and drop the attention output
         attended_tokens = self.output_projection(attended_tokens)
         attended_tokens = self.output_dropout(attended_tokens)
+
+        # Add the attention output to the original tokens
         return residual + attended_tokens
 
 
@@ -300,8 +342,11 @@ class ChannelLayerNorm2d(nn.Module):
         self.normalization = nn.LayerNorm(channels)
 
     def forward(self, features):
+        # Move channels last because LayerNorm normalizes the last dimension
         features = features.permute(0, 2, 3, 1)
+        # Normalize channels independently at each spatial location
         features = self.normalization(features)
+        # Restore the [batch, channel, height, width] layout
         return features.permute(0, 3, 1, 2)
 
 
@@ -345,6 +390,7 @@ class ConformerCNNModule(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, tokens):
+        # Save tokens for the residual connection and read their dimensions
         residual = tokens
         batch_size, token_count, channels = tokens.shape
         expected_token_count = self.height * self.width
@@ -354,18 +400,26 @@ class ConformerCNNModule(nn.Module):
                 f"{tuple(tokens.shape)}"
             )
 
+        # Normalize channels, then reshape tokens into a 2D feature map
         feature_map = self.normalization(tokens)
         feature_map = feature_map.transpose(1, 2).reshape(
             batch_size, channels, self.height, self.width
         )
+
+        # Apply pointwise projection and gated linear unit
         feature_map = self.input_projection(feature_map)
         feature_map = self.glu(feature_map)
+
+        # Extract local spatial features, normalize, and activate them
         feature_map = self.depthwise_convolution(feature_map)
         feature_map = self.batch_normalization(feature_map)
         feature_map = self.activation(feature_map)
+
+        # Project and regularize the feature map
         feature_map = self.output_projection(feature_map)
         feature_map = self.dropout(feature_map)
 
+        # Flatten back to tokens and add the residual input
         output_tokens = feature_map.flatten(start_dim=2).transpose(1, 2)
         return residual + output_tokens
 
@@ -420,6 +474,7 @@ class TransformerBranch(nn.Module):
         self.final_normalization = nn.LayerNorm(channels)
 
     def forward_attention_output(self, features):
+        # Check that the input matches the configured spatial and channel sizes
         batch_size, channels, height, width = features.shape
         expected_shape = (self.channels, self.height, self.width)
         if (channels, height, width) != expected_shape:
@@ -428,22 +483,33 @@ class TransformerBranch(nn.Module):
                 f"{tuple(features.shape)}"
             )
 
+        # Convert the feature map to tokens and run the first feed-forward block
         tokens = features.flatten(start_dim=2).transpose(1, 2)
         tokens = self.feed_forward_1(tokens)
+        # Return tokens after self-attention for reuse by pruning and classifier
         return self.self_attention(tokens)
 
     def forward_with_attention_output(self, features):
+        # Keep input dimensions to restore the final feature map
         batch_size, channels, height, width = features.shape
+
+        # Run feed-forward and attention stages
         attention_output = self.forward_attention_output(features)
+
+        # Run the local CNN module and the second feed-forward block
         tokens = self.cnn_module(attention_output)
         tokens = self.feed_forward_2(tokens)
+
+        # Normalize tokens and reshape them to the original feature-map layout
         tokens = self.final_normalization(tokens)
         transformer_features = tokens.transpose(1, 2).reshape(
             batch_size, channels, height, width
         )
+        # Return both full branch output and intermediate attention output
         return transformer_features, attention_output
 
     def forward(self, features):
+        # Return the full Transformer branch output
         transformer_features, _ = self.forward_with_attention_output(features)
         return transformer_features
 
@@ -481,12 +547,16 @@ class CTBlock(nn.Module):
         )
 
     def forward(self, features):
+        # Run CNN and Transformer branches in parallel
         cnn_features = self.cnn_branch(features)
         transformer_features = self.transformer_branch(features)
+
+        # Concatenate and fuse branch features
         concatenated_features = torch.cat(
             [cnn_features, transformer_features], dim=1
         )
         fused_features = self.fusion(concatenated_features)
+        # Add the fused features to the input
         return features + fused_features
 
 
@@ -509,10 +579,14 @@ class ChannelAttention(nn.Module):
         )
 
     def forward(self, features):
+        # Pool each channel over the spatial dimensions
         pooled_features = self.global_pool(features)
+        # Arrange channel descriptors for the 1D channel convolution
         channel_descriptor = pooled_features.squeeze(-1).transpose(1, 2)
+        # Predict one weight per channel and constrain it to [0, 1]
         channel_weights = self.channel_convolution(channel_descriptor)
         channel_weights = torch.sigmoid(channel_weights)
+        # Restore broadcastable shape and reweight the input residually
         channel_weights = channel_weights.transpose(1, 2).unsqueeze(-1)
         return features + features * channel_weights
 
@@ -534,6 +608,7 @@ class SpatialAttention(nn.Module):
         self.fusion = nn.Conv2d(2, 1, kernel_size=1)
 
     def forward(self, features):
+        # Summarize channel extrema and distribution at each spatial location
         maximum = features.amax(dim=1, keepdim=True)
         minimum = features.amin(dim=1, keepdim=True)
         mean = features.mean(dim=1, keepdim=True)
@@ -541,12 +616,14 @@ class SpatialAttention(nn.Module):
             dim=1, keepdim=True, correction=0
         )
 
+        # Extract spatial features from max/min and mean/std summaries
         extrema_features = self.extrema_branch(
             torch.cat([maximum, minimum], dim=1)
         )
         distribution_features = self.distribution_branch(
             torch.cat([mean, standard_deviation], dim=1)
         )
+        # Fuse both summaries into spatial weights
         spatial_weights = torch.sigmoid(
             self.fusion(
                 torch.cat(
@@ -554,6 +631,7 @@ class SpatialAttention(nn.Module):
                 )
             )
         )
+        # Reweight the input and preserve it through a residual connection
         return features + features * spatial_weights
 
 
@@ -567,6 +645,7 @@ class ChannelSpatialAttentionBlock(nn.Module):
         self.spatial_attention = SpatialAttention()
 
     def forward(self, features):
+        # Refine channels first, then refine spatial locations
         channel_refined_features = self.channel_attention(features)
         return self.spatial_attention(channel_refined_features)
 
@@ -586,11 +665,16 @@ class CNNCSAClassifier(nn.Module):
         self.classifier = nn.Linear(feature_channels, num_classes)
 
     def forward(self, patches):
+        # Project raw spectral bands into the model feature channels
         features = self.input_projection(patches)
+        # Run the CNN block with an outer residual connection
         cnn_features = features + self.cnn_block(features)
+        # Refine features with channel and spatial attention
         refined_features = self.csa_block(cnn_features)
+        # Pool spatial locations into one descriptor per sample
         pooled_features = self.global_pool(refined_features)
         pooled_features = pooled_features.flatten(start_dim=1)
+        # Map each descriptor to class scores
         return self.classifier(pooled_features)
 
 
@@ -630,10 +714,14 @@ class CNNTransformerClassifier(nn.Module):
         self.classifier = nn.Linear(feature_channels, num_classes)
 
     def forward(self, patches):
+        # Project raw spectral bands into the model feature channels
         features = self.input_projection(patches)
+        # Extract features with the parallel CNN-Transformer block
         ct_features = self.ct_block(features)
+        # Pool spatial locations into one descriptor per sample
         pooled_features = self.global_pool(ct_features)
         pooled_features = pooled_features.flatten(start_dim=1)
+        # Map each descriptor to class scores
         return self.classifier(pooled_features)
 
 
@@ -674,16 +762,21 @@ class CNNTransformerCSAClassifier(nn.Module):
         self.classifier = nn.Linear(feature_channels, num_classes)
 
     def forward(self, patches):
+        # Project raw spectral bands into the model feature channels
         features = self.input_projection(patches)
+        # Extract features with the parallel CNN-Transformer block
         ct_features = self.ct_block(features)
+        # Refine features with channel and spatial attention
         refined_features = self.csa_block(ct_features)
+        # Pool spatial locations into one descriptor per sample
         pooled_features = self.global_pool(refined_features)
         pooled_features = pooled_features.flatten(start_dim=1)
+        # Map each descriptor to class scores
         return self.classifier(pooled_features)
 
 
-class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
-    """Shared training and mask-export logic for adaptive band pruning."""
+class CNNTransformerCSABandPruningClassifier(CNNTransformerCSAClassifier):
+    """CTA-Net classifier with adaptive spectral-band pruning."""
 
     def __init__(
         self,
@@ -701,6 +794,7 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
         pruning_gate_slope=20.0,
         pruning_sparsity_weight=0.001,
         pruning_percentage=5.0,
+        ste_warmup_epochs=10,
     ):
         super().__init__(
             input_channels=input_channels,
@@ -719,13 +813,9 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
         self.num_classes = int(num_classes)
         self.patch_size = int(patch_size)
         self.transformer_heads = int(transformer_heads)
-        self.transformer_expansion_factor = int(
-            transformer_expansion_factor
-        )
+        self.transformer_expansion_factor = int(transformer_expansion_factor)
         self.transformer_dropout = float(transformer_dropout)
-        self.transformer_ffn_residual_scale = float(
-            transformer_ffn_residual_scale
-        )
+        self.transformer_ffn_residual_scale = float(transformer_ffn_residual_scale)
         self.transformer_position_encoding = TransformerPositionEncoding(
             transformer_position_encoding
         )
@@ -742,6 +832,28 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
         if not 0 <= self.pruning_percentage < 100:
             raise ValueError("Pruning percentage must be in [0, 100)")
 
+        # One raw descriptor per band; spatial means do not mix bands
+        fused_channels = self.feature_channels + self.input_channels
+        self.band_gate_head = nn.Sequential(
+            nn.Linear(fused_channels, self.feature_channels),
+            nn.GELU(),
+            nn.Linear(self.feature_channels, self.input_channels),
+        )
+        nn.init.zeros_(self.band_gate_head[-1].weight)
+        nn.init.constant_(self.band_gate_head[-1].bias, 0.15)
+
+        self.ste_warmup_epochs = int(ste_warmup_epochs)
+        if self.ste_warmup_epochs < 0:
+            raise ValueError("STE warmup epochs cannot be negative")
+        self.register_buffer(
+            "hard_keep_mask",
+            torch.ones(self.input_channels, dtype=torch.bool),
+        )
+        self.register_buffer(
+            "_ste_enabled",
+            torch.tensor(False, dtype=torch.bool),
+        )
+
     def _run_transformer_for_gate_prediction(self, features):
         batch_norm_states = []
         for module in self.ct_block.transformer_branch.modules():
@@ -756,8 +868,7 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
                     module.running_mean,
                     module.running_var,
                 ))
-                # With no running buffers, BatchNorm uses current batch
-                # statistics without updating persistent buffers.
+                # Gate prediction uses batch statistics without updating stored values
                 module.track_running_stats = False
                 module.running_mean = None
                 module.running_var = None
@@ -765,8 +876,7 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
         for module in self.ct_block.transformer_branch.modules():
             if isinstance(module, nn.Dropout) and module.training:
                 dropout_states.append((module, module.training))
-                # Gate prediction should not add stochasticity before the
-                # classification pass, which keeps its dropout behavior intact.
+                # Keep dropout out of the gate-prediction pass
                 module.training = False
         try:
             attention_output = (
@@ -776,7 +886,7 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
         finally:
             for module, training in dropout_states:
                 module.training = training
-            # Only the classification pass should update persistent BN stats.
+            # Restore BatchNorm before the classification pass
             for module, track_running_stats, running_mean, running_var in batch_norm_states:
                 module.track_running_stats = track_running_stats
                 module.running_mean = running_mean
@@ -784,17 +894,30 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
         return attention_output
 
     def predict_band_gates(self, patches):
-        """Return differentiable band gates, as implemented by a subclass."""
-        raise NotImplementedError
-
-    def forward(self, patches):
-        gates = self.predict_band_gates(patches)
-        self._last_pruning_penalty = (
-            self.pruning_sparsity_weight
-            * gates.sum(dim=1).mean()
+        """Fuse pooled MHSA context with one spatial mean per raw band."""
+        features = self.input_projection(patches)
+        attention_output = self._run_transformer_for_gate_prediction(features)
+        attention_context = attention_output.mean(dim=1)
+        raw_band_features = patches.mean(dim=(2, 3))
+        fused_features = torch.cat(
+            (attention_context, raw_band_features), dim=1
         )
-        masked_patches = patches * gates[:, :, None, None]
-        return super().forward(masked_patches)
+        gate_logits = self.band_gate_head(fused_features)
+        return torch.sigmoid(self.pruning_gate_slope * gate_logits)
+
+    def set_ste_enabled(self, enabled):
+        self._ste_enabled.fill_(bool(enabled))
+
+    @torch.no_grad()
+    def set_global_pruning_mask(self, selected_band_indices):
+        keep_mask = torch.zeros_like(self.hard_keep_mask)
+        selected_band_indices = torch.as_tensor(
+            selected_band_indices,
+            dtype=torch.long,
+            device=keep_mask.device,
+        )
+        keep_mask[selected_band_indices] = True
+        self.hard_keep_mask.copy_(keep_mask)
 
     def pruning_regularization(self, patches):
         """Return the configured sparsity penalty for the current batch."""
@@ -828,79 +951,30 @@ class _BaseBandPruningClassifier(CNNTransformerCSAClassifier):
         selected_indices = torch.nonzero(keep_mask, as_tuple=True)[0]
         return selected_indices.cpu(), mean_gates.cpu()
 
-
-class CNNTransformerCSABandPruningClassifier(
-    _BaseBandPruningClassifier
-):
-    """The supported adaptive pruning model: MHSA/raw-band scoring with STE."""
-
-    def __init__(self, *args, ste_warmup_epochs=10, **kwargs):
-        super().__init__(*args, **kwargs)
-        # One raw descriptor per band; spatial means do not mix bands.
-        fused_channels = self.feature_channels + self.input_channels
-        self.band_gate_head = nn.Sequential(
-            nn.Linear(fused_channels, self.feature_channels),
-            nn.GELU(),
-            nn.Linear(self.feature_channels, self.input_channels),
-        )
-        nn.init.zeros_(self.band_gate_head[-1].weight)
-        nn.init.constant_(self.band_gate_head[-1].bias, 0.15)
-
-        self.ste_warmup_epochs = int(ste_warmup_epochs)
-        if self.ste_warmup_epochs < 0:
-            raise ValueError("STE warmup epochs cannot be negative")
-        self.register_buffer(
-            "hard_keep_mask",
-            torch.ones(self.input_channels, dtype=torch.bool),
-        )
-        self.register_buffer(
-            "_ste_enabled",
-            torch.tensor(False, dtype=torch.bool),
-        )
-
-    def predict_band_gates(self, patches):
-        """Fuse pooled MHSA context with one spatial mean per raw band."""
-        features = self.input_projection(patches)
-        attention_output = self._run_transformer_for_gate_prediction(features)
-        attention_context = attention_output.mean(dim=1)
-        raw_band_features = patches.mean(dim=(2, 3))
-        fused_features = torch.cat(
-            (attention_context, raw_band_features), dim=1
-        )
-        gate_logits = self.band_gate_head(fused_features)
-        return torch.sigmoid(self.pruning_gate_slope * gate_logits)
-
-    def set_ste_enabled(self, enabled):
-        self._ste_enabled.fill_(bool(enabled))
-
-    @torch.no_grad()
-    def set_global_pruning_mask(self, selected_band_indices):
-        keep_mask = torch.zeros_like(self.hard_keep_mask)
-        selected_band_indices = torch.as_tensor(
-            selected_band_indices,
-            dtype=torch.long,
-            device=keep_mask.device,
-        )
-        keep_mask[selected_band_indices] = True
-        self.hard_keep_mask.copy_(keep_mask)
-
     def forward(self, patches):
-        if not bool(self._ste_enabled):
-            return super().forward(patches)
+        # Predict a soft keep score for every input band
+        gates = self.predict_band_gates(patches)
 
-        soft_gates = self.predict_band_gates(patches)
-        hard_mask = self.hard_keep_mask.to(
-            device=patches.device,
-            dtype=patches.dtype,
-        ).unsqueeze(0)
-        # Forward uses the same global binary mask for every sample; backward
-        # uses the soft per-sample gates as a straight-through proxy.
-        straight_through_mask = (
-            hard_mask + soft_gates - soft_gates.detach()
-        )
-        self._last_pruning_penalty = 0.0
-        masked_patches = patches * straight_through_mask[:, :, None, None]
-        return CNNTransformerCSAClassifier.forward(self, masked_patches)
+        if bool(self._ste_enabled):
+            # Use the fixed binary mask forward and soft gates for gradients
+            hard_mask = self.hard_keep_mask.to(
+                device=patches.device,
+                dtype=patches.dtype,
+            ).unsqueeze(0)
+            pruning_mask = hard_mask + gates - gates.detach()
+            self._last_pruning_penalty = 0.0
+        else:
+            # Use soft gates and add their sparsity cost to the training loss
+            pruning_mask = gates
+            self._last_pruning_penalty = (
+                self.pruning_sparsity_weight
+                * gates.sum(dim=1).mean()
+            )
+
+        # Apply one gate to each band's full spatial patch
+        masked_patches = patches * pruning_mask[:, :, None, None]
+        # Classify the pruned patches with the inherited model
+        return super().forward(masked_patches)
 
 
 class FrozenBandPrunedClassifier(nn.Module):
@@ -915,9 +989,11 @@ class FrozenBandPrunedClassifier(nn.Module):
         )
 
     def forward(self, patches):
+        # Keep only the selected original spectral bands
         selected_patches = patches.index_select(
             1, self.selected_band_indices
         )
+        # Run the compact classifier on the reduced spectrum
         return self.classifier(selected_patches)
 
 
