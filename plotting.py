@@ -1,7 +1,10 @@
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
+from matplotlib.patches import Patch
 import numpy as np
 from sklearn.metrics import ConfusionMatrixDisplay
+
+from utils import SplitName
 
 
 def plot_spectral_bands_and_ground_truth(
@@ -199,16 +202,31 @@ def plot_classification_map(
     class_names,
     num_classes,
     model_name,
+    split_tables,
 ):
-    """Plot ground truth and the predicted classification map."""
+    """Plot ground truth, predictions and errors outside validation/test."""
     colors = ["black"] + list(
         plt.get_cmap("tab10").colors[:num_classes]
     )
     color_map = ListedColormap(colors)
-    figure, axes = plt.subplots(1, 2, figsize=(14, 9))
+    error_map = np.zeros_like(ground_truth, dtype=np.uint8)
+    ignored_table = np.vstack(
+        [
+            split_tables[SplitName.TEST.value],
+            split_tables[SplitName.VALIDATION.value],
+        ]
+    )
+    labeled_mask = ground_truth != 0
+    error_map[labeled_mask] = (
+        classification_map[labeled_mask] == ground_truth[labeled_mask]
+    ).astype(np.uint8) + 1
+    error_map[ignored_table[:, 0], ignored_table[:, 1]] = 0
+    error_color_map = ListedColormap(["black", "green", "red"])
+
+    figure, axes = plt.subplots(1, 3, figsize=(20, 9))
 
     for axis, image, title in zip(
-        axes,
+        axes[:2],
         [ground_truth, classification_map],
         ["Ground Truth", f"{model_name} Classification Map"],
     ):
@@ -223,7 +241,7 @@ def plot_classification_map(
 
     colorbar = figure.colorbar(
         displayed_image,
-        ax=axes,
+        ax=axes[:2],
         ticks=np.arange(num_classes + 1),
         fraction=0.035,
         pad=0.02,
@@ -231,7 +249,25 @@ def plot_classification_map(
     colorbar.ax.set_yticklabels(
         [class_names[label] for label in range(num_classes + 1)]
     )
-    figure.suptitle(
-        f"Pavia University: Ground Truth vs {model_name} Prediction"
+    axes[2].imshow(
+        error_map,
+        cmap=error_color_map,
+        vmin=0,
+        vmax=2,
     )
+    axes[2].set_title("Train/excluded errors")
+    axes[2].axis("off")
+    figure.legend(
+        handles=[
+            Patch(color="green", label="Correct"),
+            Patch(color="red", label="Incorrect"),
+            Patch(color="black", label="Validation/test/unlabeled"),
+        ],
+        loc="lower center",
+        ncol=3,
+    )
+    figure.suptitle(
+        f"Pavia University: Ground Truth, {model_name} Prediction and Errors"
+    )
+    figure.tight_layout(rect=(0, 0.06, 1, 0.95))
     plt.show()
