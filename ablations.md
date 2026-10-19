@@ -525,13 +525,13 @@ I timing sono un rebenchmark CPU a thread singolo (`torch.set_num_threads(1)`), 
 | 90% | Raw-mean senza STE | 2,513 | 2,336 | 1,08× |
 | 90% | Raw-mean con STE | 2,192 | 2,119 | 1,03× |
 
-Questi numeri indicano un possibile vantaggio modesto a 80/90%, mentre a 70% il compatto è più lento. La dispersione tra seed dei rapporti è ampia soprattutto all'80%; il timing non è quindi una prova robusta di speedup. Sono misure del classificatore compatto dopo aver filtrato il cubo, non del percorso che calcola gli score di pruning a ogni patch. Report completo: `outputs/diagnostics/adaptive_raw_mean_ste_budget_sweep_70_80_90_full_training_5seeds.json`.
+Questi numeri indicano un possibile vantaggio modesto a 80/90%, mentre a 70% il compatto è più lento. La dispersione tra seed dei rapporti è ampia soprattutto all'80%; il timing non è quindi una prova robusta di speedup. Sono misure del classificatore compatto dopo aver filtrato il cubo, non del percorso che calcola gli score di pruning a ogni patch.
 
 ### Prova STE con pruning al 99%
 
 **Che cos'è:** prova di stress della selezione STE, mantenendo una sola banda su 103. **Configurazione:** seed `1496815513`, split 42, stesso protocollo della sweep precedente; test escluso. È rimasta la banda 96 (indice 1-based). Validation del compatto: 51,1% prima del fine-tuning, 46,7% dopo 30 epoche.
 
-Nel rebenchmark CPU a thread singolo, batch 1: `2,095 ms` per campione full-band e `2,045 ms` compatto. Batch 32: `1,058 ms` per campione full-band e `1,047 ms` compatto, rapporto `1,01×`. La filtrazione del cubo una tantum è stata misurata in circa `0,168 ms`; il vantaggio sulla latenza del modello resta praticamente nullo e il dato è un singolo run diagnostico. Report: `outputs/diagnostics/raw_mean_ste_99pct_seed1496815513.json`.
+Nel rebenchmark CPU a thread singolo, batch 1: `2,095 ms` per campione full-band e `2,045 ms` compatto. Batch 32: `1,058 ms` per campione full-band e `1,047 ms` compatto, rapporto `1,01×`. La filtrazione del cubo una tantum è stata misurata in circa `0,168 ms`; il vantaggio sulla latenza del modello resta praticamente nullo e il dato è un singolo run diagnostico.
 
 ### Variante precedente con soglia fissa
 
