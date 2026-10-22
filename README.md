@@ -1,4 +1,8 @@
-# Hyperspectral Neural Networks for Few-Shot Classification
+# Few-Samples Hyperspectral Image Classification and Adaptive Band Selection
+
+<p align="center">
+  <img src="readme_assets/hyperspectral-full-scene.gif" alt="Full-scene animation comparing a false-colour RGB composite with full-band CTA-Net classification" width="52.5%" />
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+" height="28" />
@@ -8,7 +12,7 @@
   <img src="https://img.shields.io/badge/Training-Kaggle%20GPU-20BEFF?logo=kaggle&logoColor=white" alt="Kaggle GPU" height="28" />
 </p>
 
-**Few-shot pixel classification on Pavia University with CTA-Net. The notebook's current configuration trains the adaptive pruning model for 150 epochs, fine-tunes its compact model for 30 epochs, and compares the two on five fixed training seeds. The best recorded non-pruned ablation (8 heads) achieved 88.42 ± 2.67% OA, 90.07 ± 1.28% AA, and 84.96 ± 3.21% Kappa on split 42.**
+**Given a 15 × 15 Pavia University hyperspectral patch, CTA-Net predicts the land-cover class at its center using only 10 training and 5 validation pixels per class. The learned band selector retains 72 of 103 bands; across five seeds on split 42, the compact model achieves 86.05 ± 1.29% test OA, 89.41 ± 0.92% test AA, and 82.05 ± 1.52% test Kappa.**
 
 *Alessandro Carotenuto*
 
@@ -23,7 +27,7 @@ The paper proposes CTA-Net for few-sample hyperspectral image classification. Th
 ## Table of Contents
 
 - [How it works](#how-it-works)
-- [Typical results](#typical-results)
+- [Final results](#final-results)
 - [Ablation highlights](#ablation-highlights)
 - [Architecture](#architecture)
 - [Training pipeline](#training-pipeline)
@@ -61,9 +65,20 @@ Input patch: 15 x 15 pixels, 103 spectral bands
 
 The main experiment follows the Pavia University few-shot setup: 10 training pixels and 5 validation pixels per class, with all remaining labeled pixels used for testing. Sample Amplification is applied to training patches only. Validation and test data are left unchanged.
 
-## Typical results
+## Final results
 
-These are recorded non-pruned ablations, summarized as mean ± sample standard deviation over 10 training seeds on split `42` (10 training and 5 validation samples per class). The reference uses `15 x 15` patches, 128 feature channels, 150 epochs, Adam at `0.00008`, and zero weight decay. The notebook default is now the pruning architecture; its settings are listed below.
+The final comparison evaluates the compact band-selected CTA-Net against a full-band CTA-CSA model trained from scratch. Both use the same fixed Pavia University split (`42`), five training seeds, and few-shot training data. The compact model trains its gate for 150 epochs, retains 72 of 103 bands (30% removed), and is fine-tuned for 30 epochs. The full-band baseline trains for 180 epochs. Metrics are mean ± sample standard deviation across seeds on the shared test set of 42,641 labeled pixels.
+
+| Model | Bands retained | Test OA | Test AA | Test Kappa |
+|---|---:|---:|---:|---:|
+| Full-band CTA-CSA baseline | 103 / 103 | **88.47 ± 2.13%** | 89.72 ± 1.56% | **84.96 ± 2.66%** |
+| Compact CTA-CSA with learned band selection | 72 / 103 | 86.05 ± 1.29% | **89.41 ± 0.92%** | 82.05 ± 1.52% |
+
+Across paired seeds, compact-minus-full-band differences were `−2.42 ± 1.26` percentage points OA, `−0.31 ± 2.24` points AA, and `−2.92 ± 1.73` points Kappa. These results use one fixed random split; they do not establish generalization across independent spatial splits. The compact model reduces the spectral input, while measured CPU inference gains in the separate band-selection sweep were small.
+
+### Earlier non-pruned ablations
+
+These historical ablations are summarized as mean ± sample standard deviation over 10 training seeds on split `42`. They use `15 x 15` patches, 128 feature channels, 150 epochs, Adam at `0.00008`, and zero weight decay. They are separate from the final five-seed band-selection comparison above.
 
 | Model | OA | AA | Kappa |
 |-------|---:|---:|------:|
@@ -94,7 +109,7 @@ The classifier receives patches as `bands × height × width` tensors. A `1 × 1
 | `CNN_CSA` | Multiscale CNN, channel-spatial attention, and classifier |
 | `CNN_TRANSFORMER` | Parallel CNN and Transformer branches, then classifier |
 | `CNN_TRANSFORMER_CSA` | CNN-Transformer block, channel-spatial attention, and classifier; the complete CTA-Net classifier |
-| `CNN_TRANSFORMER_CSA_BAND_PRUNING` | CTA-Net classifier with the supported adaptive spectral-band pruning head |
+| `CNN_TRANSFORMER_CSA_BAND_PRUNING` | CTA-Net classifier with a learned adaptive spectral-band selection head |
 
 The classifier variants reuse the same implementation blocks. Sample amplification is a training-data option applied outside the model; it is not a separate neural-network layer.
 
@@ -117,9 +132,9 @@ The Transformer branch follows a Conformer-style block with two feed-forward mod
 
 The attention block applies channel attention followed by spatial attention. Spatial descriptors include the maximum, minimum, mean, and standard deviation across channels. Each attention stage has a residual connection.
 
-### Adaptive spectral pruning (experimental)
+### Adaptive spectral-band selection
 
-The notebook default is `CNN_TRANSFORMER_CSA_BAND_PRUNING` with a 30% bottom-k budget. The gate model takes all 103 bands and applies its learned binary mask; the compact model takes only the 72 retained bands. After fine-tuning the compact model for 30 epochs, the notebook evaluates both on the same test split and seed. It does not train a separate no-pruning baseline.
+The completed main experiment uses `CNN_TRANSFORMER_CSA_BAND_PRUNING` with a 30% bottom-k budget. A gated CTA-Net learns band scores from training samples; the selected binary mask retains 72 of the 103 bands. The compact model is fine-tuned for 30 epochs. For the paired comparison, a separate full-band CTA-CSA baseline is trained from scratch for 180 epochs with the same seed, split, and training data.
 
 Gate scores are estimated from training samples only. STE starts after a 10-epoch soft-gate warm-up: the forward pass uses a binary mask and the backward pass uses soft gates for the approximate gradient. Validation selects checkpoints; test data does not choose bands or checkpoints.
 
@@ -142,8 +157,8 @@ The `CTA_NET` mode materializes four training pools for every run: original patc
 1. Load `PaviaU.mat` and `PaviaU_gt.mat`; create the fixed random split (seed 42, 10 train and 5 validation pixels per class).
 2. Apply per-band min-max normalization, reflect padding, and extract `15 x 15` patches. CTA-Net sample amplification is applied to training patches only.
 3. Train the gated model for 150 epochs. STE is enabled after its 10-epoch warm-up; validation selects the checkpoint and the training loader determines the global bottom-k mask.
-4. Build the compact model from the retained bands and fine-tune it for 30 epochs. No separate no-pruning model is trained.
-5. Evaluate and compare gated and compact models per seed on the same test split. The notebook prints aggregate metrics, plots both confusion matrices, and builds classification maps for the seed with the lowest compact-model validation loss.
+4. Build the compact model from the retained bands and fine-tune it for 30 epochs. Train a full-band CTA-CSA comparison model from scratch for 180 epochs per seed.
+5. Evaluate the compact and full-band models on the same test split. The notebook prints aggregate and paired metrics, plots their confusion matrices, and builds classification maps for the seed with the lowest compact-model validation loss.
 6. Save checkpoints under `outputs/checkpoints/` and evaluation/comparison reports under `outputs/results/`.
 
 ## Project structure
@@ -157,7 +172,9 @@ The `CTA_NET` mode materializes four training pools for every run: original patc
 ├── training.py                          # Training loop, seeds, checkpoints
 ├── utils.py                             # Enumerations and shared configuration types
 ├── ablations.md                          # Detailed accuracy, pruning, and timing results
-├── hsi_classification.ipynb              # Main experiment and analysis notebook
+├── NOTEBOOK.ipynb                        # Main experiment and analysis notebook
+├── readme_assets/
+│   └── hyperspectral-full-scene.gif      # Full-scene animated input/result comparison
 ├── docs/
 │   └── research/                         # Method and replication notes
 └── tests/                                # Focused data and configuration tests
@@ -189,11 +206,11 @@ The notebook's current defaults are:
 | `BATCH_SIZE` / `NUM_WORKERS` | `32` / `0` |
 | `DEVICE` | CUDA when available, otherwise CPU |
 
-The five active seeds are the first half of the fixed ablation list; the other five remain commented out in the notebook. Change the settings in the configuration cell to run another experiment. The SA settings are described in [the sample amplification note](docs/research/cta_sample_amplification.md); Transformer reconstruction choices are in [the Conformer analysis](docs/research/hsi_conformer_architectures.md).
+The five active seeds define the completed main experiment. The other five seeds are retained in the notebook for extending the run. The sample-amplification settings are described in [the sample amplification note](docs/research/cta_sample_amplification.md); Transformer reconstruction choices are in [the Conformer analysis](docs/research/hsi_conformer_architectures.md).
 
 ## Usage
 
-Keep `hsi_classification.ipynb` and the six imported modules (`data.py`, `evaluation.py`, `models.py`, `plotting.py`, `training.py`, `utils.py`) in the same project folder and run the notebook from that folder. Locally, put `PaviaU.mat` and `PaviaU_gt.mat` in `data/raw/`. On Kaggle, attach the Pavia University dataset; the notebook finds both files under `/kaggle/input` and loads the project modules from the repository.
+Keep `NOTEBOOK.ipynb` and the six imported modules (`data.py`, `evaluation.py`, `models.py`, `plotting.py`, `training.py`, `utils.py`) in the same project folder and run the notebook from that folder. Locally, put `PaviaU.mat` and `PaviaU_gt.mat` in `data/raw/`. On Kaggle, attach the Pavia University dataset; the notebook finds both files under `/kaggle/input` and loads the project modules from the repository.
 
 Run the notebook cells in order. It writes model and compact-model checkpoints under `outputs/checkpoints/`, and test and paired-comparison reports under `outputs/results/`. Required packages are PyTorch, NumPy, SciPy, scikit-learn, and Matplotlib.
 
@@ -203,7 +220,8 @@ Run the notebook cells in order. It writes model and compact-model checkpoints u
 - The paper does not specify every Transformer, preprocessing, or sample amplification parameter. Those implementation choices are recorded in the research notes and run reports.
 - Per-band min-max normalization uses the full image cube. It does not use labels, but it uses feature statistics from the complete scene.
 - Random pixel splits allow neighboring patches to overlap spatially. Spatially separated splits are available as a separate robustness experiment.
-- Recorded non-pruned results are below the paper's absolute OA. The sample-amplification OA gain is close to the paper's component-ablation gain.
+- The final comparison covers five training seeds on one fixed random split; neighboring patch overlap and full-scene feature normalization limit how broadly the test results should be generalized.
+- The compact model trades some overall accuracy for a smaller spectral input. The measured inference speedup is modest and does not establish a robust latency advantage.
 
 ## Reference
 
